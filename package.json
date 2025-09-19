@@ -1,0 +1,24 @@
+{
+  "name": "mensajeador",
+  "version": "0.0.0",
+  "description": "Un programa de telecomunicaciones de código abierto",
+  "main": "server.js",
+  "scripts": {
+    "test": "node server.js --inspect",
+    "start": "node server.js"
+  },
+  "keywords": [
+    "mensajes",
+    "telecomunicaciones",
+    "código-abierto",
+    "foss"
+  ],
+  "author": "Luna Solar de la Fuente",
+  "license": "ISC",
+  "dependencies": {
+    "env": "^0.0.2",
+    "express": "^5.1.0",
+    "fs": "^0.0.1-security",
+    "https": "^1.0.0"
+  }
+}
