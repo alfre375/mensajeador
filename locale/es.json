@@ -1,0 +1,8 @@
+{
+    "index.title":"Mensajeador",
+    "login.title": "Iniciar Sesión | Mensajeador",
+    "login.username": "Nombre de usuario: ",
+    "login.password": "Contraseña: ",
+    "login.2fa_code": "Autenticación en dos factores: ",
+    "login.login": "Iniciar Sesión"
+}

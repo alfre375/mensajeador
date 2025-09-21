@@ -1,3 +1,4 @@
+require('dotenv').config();
 const port = process.env.PORT || 443;
 const express = require('express');
 const https = require('https');
@@ -11,6 +12,30 @@ const httpsOptions = {
     cert: fs.readFileSync('./ssl/fullchain.pem')
 }
 
+// Load users
+let users = {
+    "0": {
+        "uname": "pineapple",
+        "password": "passwd123", // Hashed and salted
+        "salt": "afc3dFxCRNdisPIL", // Random 16 digit salt
+        "email": "pineapple_cherry@mymailservice.pn",
+        "public_key": "abc", // Each user has a public key
+        "private_key": "abc", // Users can (optionally) store the
+        // password-protected private keys here
+        "2fa_key": "abc", // Encrypt with server key
+        "lang": "es",
+        "display_name": "Mx. Pinapple"
+    }
+}
+
+// Load locale files
+let loc_global = {};
+function refreshLangFiles() {
+    loc_global['es'] = JSON.parse(fs.readFileSync(`locale/es.json`)
+        .toString());
+}
+refreshLangFiles();
+
 // Functions
 function loadWebpage(filename, req, data) {
     let webpage = fs.readFileSync(filename).toString();
@@ -19,6 +44,12 @@ function loadWebpage(filename, req, data) {
     for (key in data) {
         webpage = webpage.replaceAll(key, data[key]);
     }
+
+    // Get correct locale
+    locale = 'es'
+
+    // Localise
+    webpage = translate(webpage, locale);
 
     // Return final webpage
     return webpage;
@@ -57,6 +88,17 @@ function saltGen(len,characters) {
     return res;
 }
 
+function translate(text, locale) {
+    // Ge the locale file
+    let loc = loc_global['es'];
+    // Insert data
+    for (key in loc) {
+        text = text.replaceAll('\\!!' + key + '!!\\', loc[key]);
+    }
+    // Return translated text
+    return text;
+}
+
 // Configure middleware
 app.use(cookieSession({
     name: 'session',
@@ -69,11 +111,25 @@ app.use(express.urlencoded({ extended: true }));
 
 // Primary endpoints
 app.get('/', (req, res) => {
-    loadWebpage('index.html', req, {});
+    res.send(loadWebpage('index.html', req, {}));
+});
+
+app.get('/login', (req, res) => {
+    res.send(loadWebpage('login.html', req, {}));
 })
+
+app.post('/login', (req, res) => {
+    res.send('/')
+})
+
+// Administrative endpoints
+app.get('/admin/refreshLangFiles', (req, res) => {
+    refreshLangFiles();
+    res.redirect('/');
+});
 
 const server = https.createServer(httpsOptions, app);
 
 server.listen(port, () => {
     console.log(`Mensajeador corriendo en puerto ${port}`);
-})
+});

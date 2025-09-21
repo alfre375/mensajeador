@@ -4,7 +4,7 @@
   "description": "Un programa de telecomunicaciones de código abierto",
   "main": "server.js",
   "scripts": {
-    "test": "node server.js --inspect",
+    "test": "node --inspect server.js",
     "start": "node server.js"
   },
   "keywords": [
@@ -16,7 +16,8 @@
   "author": "Luna Solar de la Fuente",
   "license": "ISC",
   "dependencies": {
-    "env": "^0.0.2",
+    "cookie-session": "^2.1.1",
+    "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "fs": "^0.0.1-security",
     "https": "^1.0.0"
