@@ -1,8 +1,13 @@
 {
-    "index.title":"Mensajeador",
-    "login.title": "Iniciar Sesión | Mensajeador",
-    "login.username": "Nombre de usuario: ",
-    "login.password": "Contraseña: ",
-    "login.2fa_code": "Autenticación en dos factores: ",
-    "login.login": "Iniciar Sesión"
+    "índice.título":"Mensajeador",
+    "iniciar_sesión.título": "Iniciar Sesión | Mensajeador",
+    "iniciar_sesión.nombre_de_usuario": "Nombre de usuario: ",
+    "iniciar_sesión.contraseña": "Contraseña: ",
+    "iniciar_sesión.código_a2f": "Autenticación en dos factores: ",
+    "iniciar_sesión.iniciar_sesión": "Iniciar Sesión",
+    "registro.err.nombre_vacío": "Debes ingresar un nombre",
+    "registro.err.contraseña_vacía": "Debes ingresar una contraseña",
+    "registro.err.correo_inválido": "Debes ingresar un correo válido",
+    "registro.err.clave_pública_vacía": "Falta la clave pública",
+    "registro.err.sin_sid_disponible": "Su cuenta se ha creada, pero no se ha podido iniciar su sesión"
 }
