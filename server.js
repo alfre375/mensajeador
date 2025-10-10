@@ -6,6 +6,8 @@ const app = express();
 const fs = require('fs');
 const crypto = require('crypto');
 const cookieSession = require('cookie-session');
+const speakeasy = require('speakeasy');
+const QRCode = require('qrcode');
 
 const httpsOptions = {
     key: fs.readFileSync('./ssl/privatekey.pem'),
@@ -128,6 +130,22 @@ function getUserByUsername(uname) {
     }
 }
 
+function gen2FAKey() {
+    // Generate a secret key
+    const secretKey = speakeasy.generateSecret({ length: 20 });
+
+    return secretKey['base32'];
+}
+
+function verifyOTP(otp) {
+    const verified = speakeasy.totp.verify({
+      secret: key,
+      encoding: "base32",
+      token: otp,
+    });
+    return verified;
+}  
+
 // Configure middleware
 app.use(cookieSession({
     name: 'session',
@@ -140,7 +158,19 @@ app.use(express.urlencoded({ extended: true }));
 
 // Primary endpoints
 app.get('/', (req, res) => {
-    res.send(loadWebpage('index.html', req, {}));
+    if (getLoggedInUser(req) === undefined) {
+        res.send(loadWebpage('index.html', req, {}));
+        return;
+    }
+    if (users[getLoggedInUser(req)]['2fa_key'] === undefined) {
+        res.send(loadWebpage('2fa.html', req, {}));
+        return;
+    }
+    if (users[getLoggedInUser(req)]['public_key'] === undefined) {
+        res.send(loadWebpage('createUserKeypair.html', req, {}));
+        return;
+    }
+    res.send(loadWebpage('chat.html', req, {}));
 });
 
 app.get('/login', (req, res) => {
@@ -197,6 +227,66 @@ app.post('/registrar', (req, res) => {
     sesiones[sid] = getUserByUsername(uname);
     res.redirect('/configurarA2F');
     passwd = undefined;
+});
+
+app.get('/style.css', (req, res) => {
+    res.sendFile(__dirname + '/style.css');
+});
+
+app.get('/assets/fonts/linjalipamanka-normal.woff', (req, res) => {
+    res.sendFile(__dirname + '/assets/fonts/linjalipamanka-normal.woff');
+});
+
+app.get("/qrgen/:contents", async (req, res) => {
+    try {
+        const contents = req.params.contents;
+        
+        // Generate QR code as PNG buffer
+        const qrBuffer = await QRCode.toBuffer(contents, {
+            type: "png",
+            margin: 1,
+            width: 300
+        });
+        
+        // Establece el tipo de contenido como image/png para poderlo cargar
+        res.setHeader("Content-Type", "image/png");
+        res.send(qrBuffer);
+    } catch (err) {
+        res.status(500).send("Error generando código QR");
+    }
+});
+
+app.get("/otpqrgen/:label", async (req, res) => {
+    try {
+        const label = req.params.label;           // e.g. "miusuario"
+        const issuer = req.query.issuer || "Mensajeador";
+        const secret = req.query.secret;          // REQUERIDO
+
+        if (!secret) {
+            return res.status(400).send("Falta ?secret=BASE32SECRET");
+        }
+
+        // Haz el URL otpauth the speakeasy
+        const otpauthUrl = speakeasy.otpauthURL({
+            secret,
+            label,
+            issuer,
+            encoding: "base32"
+        });
+
+        // Convierte el código QR a un buffer PNG
+        const qrBuffer = await QRCode.toBuffer(otpauthUrl, {
+            type: "png",
+            margin: 1,
+            width: 300
+        });
+
+        res.setHeader("Content-Type", "image/png");
+        res.send(qrBuffer);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send("Error generando el código QR");
+    }
 });
 
 // Endpoints administrativos

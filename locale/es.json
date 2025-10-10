@@ -9,5 +9,15 @@
     "registro.err.contraseña_vacía": "Debes ingresar una contraseña",
     "registro.err.correo_inválido": "Debes ingresar un correo válido",
     "registro.err.clave_pública_vacía": "Falta la clave pública",
-    "registro.err.sin_sid_disponible": "Su cuenta se ha creada, pero no se ha podido iniciar su sesión"
+    "registro.err.sin_sid_disponible": "Su cuenta se ha creada, pero no se ha podido iniciar su sesión",
+    "configurar_a2f.título": "Configurar Autenticación en Dos Factores",
+    "configurar_a2f.explicación": "Para poder acceder a este sitio, debes habilitar autenticación en dos factores.",
+    "configurar_a2f.prefijo_código": "Su código de A2F: ",
+    "configurar_a2f.sufijo_código": "",
+    "configurar_a2f.nota": "Información importante:",
+    "configurar_a2f.no_perder": "No pierdas esta clave, ya que puede que pierdas tu cuenta y sus datos en la cuenta",
+    "configurar_a2f.no_compartir": "No compartas esta clave con nadie",
+    "configurar_a2f.usar_autenticador": "Este código se ingresa en una app de A2F. Autenticador de Google es una opción, pero hay más si prefieres.",
+    "configurar_a2f.instalar_autenticador_android": "Haz clic aquí para ir a descargar el Autenticador de Google en Google Play",
+    "configurar_a2f.instalar_autenticador_apple": "Haz clic aquí para ir a descargar el Autenticador de Google en el App Store"
 }
