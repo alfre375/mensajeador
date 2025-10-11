@@ -372,6 +372,7 @@ app.get('/admin/refreshLangFiles', (req, res) => {
 // Save data when terminating
 function saveData() {
     fs.writeFileSync('./data/users.json', JSON.stringify(users));
+    fs.writeFileSync('./data/sesiones.json', JSON.stringify(sesiones));
 }
 process.on('SIGINT', () => {
     saveData();
