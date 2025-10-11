@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const cookieSession = require('cookie-session');
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
+const CryptoJS = require('crypto-js');
 
 const httpsOptions = {
     key: fs.readFileSync('./ssl/privatekey.pem'),
@@ -30,9 +31,9 @@ let users = [
     }
 ];
 users = fs.existsSync('./data/users.json') ?
-    fs.readFileSync('./data/users.json') : [];
+    JSON.parse(fs.readFileSync('./data/users.json').toString()) : [];
 sesiones = fs.existsSync('./data/sesiones.json') ?
-    fs.readFileSync('./data/sesiones.json') : {};
+    JSON.parse(fs.readFileSync('./data/sesiones.json').toString()) : {};
 
 // Load locale files
 let loc_global = {};
@@ -48,7 +49,7 @@ function loadWebpage(filename, req, data) {
 
     // Insert data
     for (key in data) {
-        webpage = webpage.replaceAll(key, data[key]);
+        webpage = webpage.replaceAll('<!--'+key+'-->', data[key]);
     }
 
     // Get correct locale
@@ -67,10 +68,10 @@ function calculateSha256(inputString) {
     return hash.digest('hex'); // Compute the hash digest and encode it in hexadecimal format
 }
 
-async function getLoggedInUser(req) {
+function getLoggedInUser(req) {
     let session = req.session.sessionId;
     if (session) {
-        let user = await client.get(`sessions:${session}`);
+        let user = sesiones[session];
         return (user != null) ? user : undefined;
     } else {
         return undefined;
@@ -144,12 +145,21 @@ function verifyOTP(otp) {
       token: otp,
     });
     return verified;
-}  
+}
+
+function encryptAES(data, key) {
+    return CryptoJS.AES.encrypt(data, key).toString();
+}
+
+function decryptAES(encryptedData, key) {
+    const bytes = CryptoJS.AES.decrypt(encryptedData, key);
+    return bytes.toString(CryptoJS.enc.Utf8);
+}
 
 // Configure middleware
 app.use(cookieSession({
     name: 'session',
-    keys: [process.env.SESSION_KEY_1, process.env.SESSION_KEY_2],
+    keys: [process.env.SESSION_KEY_1 || 'sk1', process.env.SESSION_KEY_2 || 'sk2'],
     maxAge: 14 * 24 * 60 * 60 * 1000 // 14 days in ms
 }));
 
@@ -163,7 +173,7 @@ app.get('/', (req, res) => {
         return;
     }
     if (users[getLoggedInUser(req)]['2fa_key'] === undefined) {
-        res.send(loadWebpage('2fa.html', req, {}));
+        res.send(translate('\\!!general.debes_configurar_a2f!!\\','es'));
         return;
     }
     if (users[getLoggedInUser(req)]['public_key'] === undefined) {
@@ -172,6 +182,13 @@ app.get('/', (req, res) => {
     }
     res.send(loadWebpage('chat.html', req, {}));
 });
+
+app.get('/configurarA2F', (req, res) => {
+    let mfa_key = gen2FAKey();
+    users[getLoggedInUser(req)]['2fa_key'] = encryptAES(mfa_key, process.env.SERVER_AES_KEY);
+    res.send(loadWebpage('2fa.html', req, {'CÓDIGO_A2F':mfa_key}));
+    delete mfa_key;
+})
 
 app.get('/login', (req, res) => {
     res.send(loadWebpage('login.html', req, {}));
@@ -188,27 +205,36 @@ app.get('/registrar', (req, res) => {
 app.post('/registrar', (req, res) => {
     let uname = req.body.uname;
     if (uname == undefined || uname.length == 0) {
+        res.status = 400;
         res.send(translate('\\!!registro.err.nombre_vacío!!\\','es'));
         return;
     }
     let passwd = req.body.passwd;
     if (passwd == undefined || passwd.length == 0) {
+        res.status = 400;
         res.send(translate('\\!!registro.err.contraseña_vacía!!\\','es'));
         return;
     }
     let correo = req.body.correo;
     if (correo == undefined || correo.length == 0 || !correo.includes('@')) {
+        res.status = 400;
         res.send(translate('\\!!registro.err.correo_inválido!!\\','es'));
         return;
     }
     let clavepublica = req.body.clavepublica;
     if (clavepublica == undefined || clavepublica.length == 0) {
+        res.status = 400;
         res.send(translate('\\!!registro.err.clave_pública_vacía!!\\','es'));
         return;
     }
     let display_name = req.body.display_name;
-    if (clavepublica == undefined || clavepublica.length == 0) {
+    if (display_name == undefined || display_name.length == 0) {
         display_name = uname;
+    }
+    if (getUserByUsername(uname)) {
+        res.status = 400;
+        res.send(translate('\\!!registro.err.usuario_ya_existe!!\\', 'es'));
+        return;
     }
     let user = generateUser(uname, passwd, correo, clavepublica, 'es',
         display_name);
@@ -218,6 +244,7 @@ app.post('/registrar', (req, res) => {
     while (sid in sesiones) {
         i++;
         if (i >= 100) {
+            res.status = 500;
             res.send(translate('\\!!registro.err.sin_sid_disponible!!\\', 'es'));
             return;
         }
@@ -225,12 +252,16 @@ app.post('/registrar', (req, res) => {
     }
     req.session.sessionId = sid;
     sesiones[sid] = getUserByUsername(uname);
-    res.redirect('/configurarA2F');
+    res.redirect('/');
     passwd = undefined;
 });
 
 app.get('/style.css', (req, res) => {
     res.sendFile(__dirname + '/style.css');
+});
+
+app.get('/client.js', (req, res) => {
+    res.sendFile(__dirname + '/client.js');
 });
 
 app.get('/assets/fonts/linjalipamanka-normal.woff', (req, res) => {
@@ -259,7 +290,7 @@ app.get("/qrgen/:contents", async (req, res) => {
 app.get("/otpqrgen/:label", async (req, res) => {
     try {
         const label = req.params.label;           // e.g. "miusuario"
-        const issuer = req.query.issuer || "Mensajeador";
+        const issuer = req.query.issuer;// || "Mensajeador";
         const secret = req.query.secret;          // REQUERIDO
 
         if (!secret) {
@@ -293,6 +324,15 @@ app.get("/otpqrgen/:label", async (req, res) => {
 app.get('/admin/refreshLangFiles', (req, res) => {
     refreshLangFiles();
     res.redirect('/');
+});
+
+// Save data when terminating
+function saveData() {
+    fs.writeFileSync('./data/users.json', JSON.stringify(users));
+}
+process.on('SIGINT', () => {
+    saveData();
+    process.exit(0);
 });
 
 const server = https.createServer(httpsOptions, app);
