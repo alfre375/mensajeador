@@ -12,6 +12,18 @@ async function generateKeyPair() {
     return keyPair;
 }
 
+async function generateAesKey() {
+    const key = await crypto.subtle.generateKey(
+        {
+            name: "AES-GCM", // Or "AES-CBC", "AES-CTR", "AES-KW"
+            length: 256, // For AES-256; can also be 128 or 192
+        },
+        true, // extractable: true if you want to export the key later
+        ["encrypt", "decrypt"] // keyUsages: define what the key can be used for
+    );
+    return key;
+}
+
 async function encryptDataAsymmetric(publicKey, data) {
     const encodedData = new TextEncoder().encode(data);
     const encryptedData = await window.crypto.subtle.encrypt(
@@ -29,6 +41,48 @@ async function decryptDataAsymmetric(privateKey, encryptedData) {
         encryptedData
     );
     return new TextDecoder().decode(decryptedData);
+}
+
+function arrayBufferToBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+}
+
+function base64ToArrayBuffer(b64) {
+    const binary = atob(b64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+}
+
+// Wrap AES key with RSA public key -> base64 string
+async function wrapAesKeyWithPublicKey(publicKey, aesKey) {
+    // 'raw' format wraps the AES key bytes
+    const wrapped = await crypto.subtle.wrapKey(
+        'raw',          // format of the key to wrap (raw bytes)
+        aesKey,         // CryptoKey (AES)
+        publicKey,      // RSA public CryptoKey (RSA-OAEP)
+        { name: 'RSA-OAEP' }
+    );
+    return arrayBufferToBase64(wrapped);
+}
+
+// Unwrap (decrypt) wrapped AES key with RSA private key -> returns CryptoKey (AES)
+async function unwrapAesKeyWithPrivateKey(privateKey, wrappedBase64) {
+    const wrappedBuf = base64ToArrayBuffer(wrappedBase64);
+    const aesKey = await crypto.subtle.unwrapKey(
+        'raw',                       // format of wrapped key
+        wrappedBuf,                  // wrapped key ArrayBuffer
+        privateKey,                  // RSA private CryptoKey (RSA-OAEP)
+        { name: 'RSA-OAEP' },        // unwrapping algorithm
+        { name: 'AES-GCM', length: 256 }, // algorithm of the resulting key
+        true,                        // extractable (true if you want to export later)
+        ['encrypt', 'decrypt']       // usages
+    );
+    return aesKey;
 }
 
 async function exportPublicKeyForJSON(publicKey) {
@@ -132,4 +186,24 @@ async function registrarse() {
         console.error('Error leyendo la respuesta:', err);
         alert('Respuesta inesperada del servidor');
     }
+}
+
+async function comenzarMD() {
+    let users = document.getElementById('uname').value.split(',');
+    let convoName = document.getElementById('convoName').value;
+    let convoKey = await generateAesKey();
+    let uts = {} // Users to submit
+    for (user of users) {
+        let uid = await makeRequest('/app/getUIDByUsername?username='+user, 'GET', {}).text();
+        let pubKey = await makeRequest('/app/getUserPublicKey?user='+uid, 'GET', {}).text();
+        pubKey = await importPublicKeyFromJSON(pubKey);
+        let encryptedConvoKey = await wrapAesKeyWithPublicKey(pubKey, convoKey);
+        uts[uid] = encryptedConvoKey;
+    }
+    let liu = await makeRequest('/app/getLoggedInUser', 'GET', {}).text();
+    let pubKey = await makeRequest('/app/getUserPublicKey?user='+liu, 'GET', {}).text();
+    pubKey = await importPublicKeyFromJSON(pubKey);
+    let encryptedConvoKey = await wrapAesKeyWithPublicKey(pubKey, convoKey);
+    uts[liu] = encryptedConvoKey;
+    let res = await makeRequest('/app/comenzarConversacion/md', 'POST', { 'users': uts});
 }

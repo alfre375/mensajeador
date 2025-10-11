@@ -16,7 +16,7 @@ const httpsOptions = {
     cert: fs.readFileSync('./ssl/fullchain.pem')
 };
 
-// Load users
+// Carga los usuarios
 var users = [
     {
         "uname": "pineapple",
@@ -28,7 +28,8 @@ var users = [
         // password-protected private keys here
         "2fa_key": "abc", // Encrypt with server key
         "lang": "es",
-        "display_name": "Mx. Pinapple"
+        "display_name": "Mx. Pinapple",
+        "conversations": []
     }
 ];
 users = fs.existsSync('./data/users.json') ?
@@ -36,7 +37,32 @@ users = fs.existsSync('./data/users.json') ?
 var sesiones = fs.existsSync('./data/sesiones.json') ?
     JSON.parse(fs.readFileSync('./data/sesiones.json').toString()) : {};
 
-// Load locale files
+// Carga las conversaciónes
+var converes = {
+    'a8d3d493-434f-448c-bf88-2d69b9c211fa': {
+        'conversation-type': 0, // Usuario a usuario, estilo mensaje directo
+        'creation-date': new Date().getTime(),
+        'conversation-users': {
+            0: 'abcabcabc', // Key: uid del usuario; val: llave de conversación encriptada con llave pública del usuario
+            1: 'cbacba'
+        },
+        'conversation-settings': {
+            'font': undefined, // cuando es undefined: usa fuentes predeterminados
+            'require-consent-to-add': false, // requiere que todos los usuarios acepten para agregar más usuarios
+        },
+        'messages': [
+            { // En realidad, cada mensaje está encriptado
+                'sent-by': 0,
+                'type': 0, // 0 es un mensaje de texto estándard
+                'content': 'This message was sent today',
+                'sent-at': new Date().getTime()
+            }
+        ]
+    }
+}
+converes = fs.existsSync('./data/conversaciones.json') ? fs.readFileSync('./data/conversaciones.json') : {}
+
+// Carga los archivos de localización
 let loc_global = {};
 function refreshLangFiles() {
     loc_global['es'] = JSON.parse(fs.readFileSync(`locale/es.json`)
@@ -124,7 +150,8 @@ function generateUser(uname, passwd, email, pubkey, lang, display_name) {
         // password-protected private keys here
         "2fa_key": undefined, // Encrypt with server key
         "lang": (lang !== undefined) ? lang : 'es',
-        "display_name": display_name
+        "display_name": display_name,
+        "conversations": []
     }
 }
 
@@ -299,6 +326,92 @@ app.post('/registrar', (req, res) => {
     passwd = undefined;
 });
 
+app.get('/comenzarConversacion/md', (req, res) => {
+    if (getLoggedInUser(req) === undefined) {
+        res.statusCode = 200;
+        res.redirect('/login');
+        return;
+    }
+    res.statusCode = 200;
+    res.send(loadWebpage('comenzarMD.html', req, {}));
+});
+
+app.get('/app/getUIDByUsername', (req, res) => {
+    let username = req.query.username;
+    let uid = getUserByUsername(username);
+    if (uid === undefined) {
+        res.statusCode = 400;
+        res.send(translate('\\!!app.usuario_no_existe!!\\', 'es'));
+        return;
+    }
+    res.statusCode = 200;
+    res.send(uid);
+})
+
+app.get('/app/getUserPublicKey', (req, res) => {
+    let uid = req.query.user;
+    if (typeof uid == 'string') {
+        uid = parseInt(uid);
+        if (uid === NaN) {
+            res.statusCode = 400;
+            res.send(translate('\\!!app.uid_no_válido!!\\'));
+            return;
+        }
+    }
+    if (users[uid] === undefined) {
+        res.statusCode = 400;
+        res.send(translate('\\!!app.usuario_no_existe!!\\', 'es'));
+        return;
+    }
+    let key = users[uid]['public_key'];
+    res.send(key);
+});
+
+app.get('/app/getLoggedInUser', (req, res) => {
+    let liu = getLoggedInUser(req);
+    res.statusCode = 200;
+    res.send(liu);
+})
+
+app.post('/app/comenzarConversacion/md', (req, res) => {
+    let usersToAdd = req.body.users;
+    
+    let date = new Date().getTime();
+    let uuid = crypto.randomUUID();
+    let i = 0;
+    while (uuid in converes) {
+        i++
+        if (i > 500) {
+            res.statusCode = 500;
+            res.send(translate('\\!!app.no_se_encontró_uuid_abierto!!\\', 'es'))
+        }
+        uuid = crypto.randomUUID();
+    }
+    
+    for (user of usersToAdd) {
+        if (user in users) {
+            users[user]['conversations'].push(uuid);
+        } else {
+            usersToAdd[user] = undefined;
+        }
+    }
+    
+    let conver = {
+        'conversation-type': 0, // Usuario a usuario, estilo mensaje directo
+        'creation-date': date,
+        'conversation-users': usersToAdd,
+        'conversation-settings': {
+            'font': undefined, // cuando es undefined: usa fuentes predeterminados
+            'require-consent-to-add': false, // requiere que todos los usuarios acepten para agregar más usuarios
+        },
+        'messages': []
+    }
+    
+    converes[uuid] = conver;
+    res.statusCode = 200;
+    res.send(uuid);
+});
+
 app.get('/style.css', (req, res) => {
     res.sendFile(__dirname + '/style.css');
 });
@@ -373,6 +486,7 @@ app.get('/admin/refreshLangFiles', (req, res) => {
 function saveData() {
     fs.writeFileSync('./data/users.json', JSON.stringify(users));
     fs.writeFileSync('./data/sesiones.json', JSON.stringify(sesiones));
+    fs.writeFileSync('./data/conversaciones.json', JSON.stringify(converes));
 }
 process.on('SIGINT', () => {
     saveData();
