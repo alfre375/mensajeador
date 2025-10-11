@@ -377,6 +377,10 @@ process.on('SIGINT', () => {
     saveData();
     process.exit(0);
 });
+process.on('SIGTERM', () => {
+    saveData();
+    process.exit(0);
+})
 
 const server = https.createServer(httpsOptions, app);
 
