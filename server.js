@@ -9,6 +9,7 @@ const cookieSession = require('cookie-session');
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const CryptoJS = require('crypto-js');
+const twoWeeks = 1000 * 60 * 60 * 24 * 14;
 
 const httpsOptions = {
     key: fs.readFileSync('./ssl/privatekey.pem'),
@@ -16,7 +17,7 @@ const httpsOptions = {
 };
 
 // Load users
-let users = [
+var users = [
     {
         "uname": "pineapple",
         "password": "passwd123", // Hashed and salted
@@ -32,7 +33,7 @@ let users = [
 ];
 users = fs.existsSync('./data/users.json') ?
     JSON.parse(fs.readFileSync('./data/users.json').toString()) : [];
-sesiones = fs.existsSync('./data/sesiones.json') ?
+var sesiones = fs.existsSync('./data/sesiones.json') ?
     JSON.parse(fs.readFileSync('./data/sesiones.json').toString()) : {};
 
 // Load locale files
@@ -71,7 +72,11 @@ function calculateSha256(inputString) {
 function getLoggedInUser(req) {
     let session = req.session.sessionId;
     if (session) {
-        let user = sesiones[session];
+        if (sesiones[session]['expiry'] > new Date().getTime()) {
+            delete sesiones[session];
+            return undefined;
+        }
+        let user = sesiones[session]['user'];
         return (user != null) ? user : undefined;
     } else {
         return undefined;
@@ -228,7 +233,8 @@ app.post('/login', (req, res) => {
         sid = saltGen();
     }
     req.session.sessionId = sid;
-    sesiones[sid] = getUserByUsername(uname);
+    let twoWeeksTime = new Date(new Date().getTime() + twoWeeks);
+    sesiones[sid] = {'user':uid,'expiry':twoWeeksTime.getTime()};
     res.statusCode = 200;
     res.redirect('/');
 });
@@ -286,7 +292,8 @@ app.post('/registrar', (req, res) => {
         sid = saltGen();
     }
     req.session.sessionId = sid;
-    sesiones[sid] = getUserByUsername(uname);
+    let twoWeeksTime = new Date(new Date(). getTime() + twoWeeks);
+    sesiones[sid] = {'user':getUserByUsername(uname),'expiry':twoWeeksTime.getTime()};
     res.statusCode = 200;
     res.redirect('/');
     passwd = undefined;
