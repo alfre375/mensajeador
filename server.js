@@ -138,7 +138,7 @@ function gen2FAKey() {
     return secretKey['base32'];
 }
 
-function verifyOTP(otp) {
+function verifyOTP(otp, key) {
     const verified = speakeasy.totp.verify({
       secret: key,
       encoding: "base32",
@@ -195,7 +195,42 @@ app.get('/login', (req, res) => {
 });
 
 app.post('/login', (req, res) => {
-    res.send('/');
+    let uname = req.body.uname;
+    let passwd = req.body.password;
+    let mfa_code = req.body.mfa;
+    let uid = getUserByUsername(uname);
+    if (uid === undefined) {
+        res.statusCode = 400;
+        res.send(translate('\\!!iniciar_sesión.usuario_no_existe!!\\', 'es'));
+        return;
+    }
+    let salt = users[uid]['salt'];
+    passwd = calculateSha256(passwd + salt);
+    if (passwd !== users[uid]['password']) {
+        res.statusCode = 400;
+        res.send(translate('\\!!iniciar_sesión.contraseña_incorrecta!!\\', 'es'));
+        return;
+    }
+    if (!verifyOTP(mfa_code, decryptAES(users[uid]['2fa_key'], process.env.SERVER_AES_KEY))) {
+        res.statusCode = 400;
+        res.send(translate('\\!!iniciar_sesión.código_a2f_incorrecto!!\\', 'es'));
+        return;
+    }
+    let sid = saltGen();
+    let i = 0;
+    while (sid in sesiones) {
+        i++;
+        if (i >= 100) {
+            res.statusCode = 500;
+            res.send(translate('\\!!registro.err.sin_sid_disponible!!\\', 'es'));
+            return;
+        }
+        sid = saltGen();
+    }
+    req.session.sessionId = sid;
+    sesiones[sid] = getUserByUsername(uname);
+    res.statusCode = 200;
+    res.redirect('/');
 });
 
 app.get('/registrar', (req, res) => {
@@ -205,25 +240,25 @@ app.get('/registrar', (req, res) => {
 app.post('/registrar', (req, res) => {
     let uname = req.body.uname;
     if (uname == undefined || uname.length == 0) {
-        res.status = 400;
+        res.statusCode = 400;
         res.send(translate('\\!!registro.err.nombre_vacío!!\\','es'));
         return;
     }
     let passwd = req.body.passwd;
     if (passwd == undefined || passwd.length == 0) {
-        res.status = 400;
+        res.statusCode = 400;
         res.send(translate('\\!!registro.err.contraseña_vacía!!\\','es'));
         return;
     }
     let correo = req.body.correo;
     if (correo == undefined || correo.length == 0 || !correo.includes('@')) {
-        res.status = 400;
+        res.statusCode = 400;
         res.send(translate('\\!!registro.err.correo_inválido!!\\','es'));
         return;
     }
     let clavepublica = req.body.clavepublica;
     if (clavepublica == undefined || clavepublica.length == 0) {
-        res.status = 400;
+        res.statusCode = 400;
         res.send(translate('\\!!registro.err.clave_pública_vacía!!\\','es'));
         return;
     }
@@ -232,7 +267,7 @@ app.post('/registrar', (req, res) => {
         display_name = uname;
     }
     if (getUserByUsername(uname)) {
-        res.status = 400;
+        res.statusCode = 400;
         res.send(translate('\\!!registro.err.usuario_ya_existe!!\\', 'es'));
         return;
     }
@@ -244,7 +279,7 @@ app.post('/registrar', (req, res) => {
     while (sid in sesiones) {
         i++;
         if (i >= 100) {
-            res.status = 500;
+            res.statusCode = 500;
             res.send(translate('\\!!registro.err.sin_sid_disponible!!\\', 'es'));
             return;
         }
@@ -252,6 +287,7 @@ app.post('/registrar', (req, res) => {
     }
     req.session.sessionId = sid;
     sesiones[sid] = getUserByUsername(uname);
+    res.statusCode = 200;
     res.redirect('/');
     passwd = undefined;
 });
