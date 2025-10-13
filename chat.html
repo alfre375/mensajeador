@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+    <title>\!!chat.título!!\</title>
+</head>
+<body style="margin: 0;">
+    <aside class="listaConveres">
+        <div class="converDisponible" id="agregar_conver" onclick="window.location.href = './comenzarConversacion/md'">
+            + Nueva Conversación
+        </div>
+        <div class="converDisponible" id="uuid_de_conver" onclick="abrirConver('uuid_de_conver')">
+            NOMBRE_CONVER
+        </div>
+    </aside>
+    <main class="areaConverPrincipal" id="areaConverPrincipal">
+        <div class="mensajes" id="mensajes"> <!--Espacio de mensajes-->
+            <!--<div class="mensaje" id="muestra_de_mensaje">
+                <img src="/app/fotoDePerfil?user=uid" width="36.8px" height="36.8px" class="fotoDePerfilMensaje">
+                <div class="mensajeMedio">
+                    <div>
+                        <span>de_quien_es</span>
+                        <span>cuando_se_ha_mandado</span>
+                        editado_en
+                    </div>
+                    <div>
+                        <span>texto_de_mensaje</span>
+                    </div>
+                </div>
+            </div>-->
+            <div class="noMostrar" id="espacioParaMensajeAntes"></div>
+            <div class="noMostrar" id="espacioParaMensajeDespues"></div>
+        </div>
+        <div class="enviarMensajes" id="enviarMensajes">
+            <input type="text" name="msg" id="msg" style="font-family: Arial, linjaLipamanka;">
+            <button type="button" onclick="enviarMensaje()">
+                <img src="./assets/images/enviar.png" alt="Enviar Mensaje" height="16px" width="16px">
+            </button>
+        </div>
+    </main>
+    <script src="./socket.io/socket.io.js"></script>
+    <script src="./client.js"></script>
+    <script src="./chat.js"></script>
+</body>
+</html>

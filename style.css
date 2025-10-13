@@ -6,3 +6,73 @@
 * {
     font-family: Arial, linjaLipamanka;
 }
+
+aside.listaConveres {
+    background-color: antiquewhite;
+    height: 100%;
+    width: 20%;
+    position:fixed;
+}
+
+aside.listaConveres div.converDisponible#uuid_de_conver {
+    display: none;
+}
+
+aside.listaConveres div.converDisponible {
+    padding: 10px;
+    background-color: aquamarine;
+    cursor: pointer;
+}
+
+aside.listaConveres div.converDisponible:hover {
+    background-color: #00ffaa;
+}
+
+aside.listaConveres div.converConNuevoMensaje {
+    background-image: linear-gradient(145deg, aquamarine, #ff4a4a);
+}
+
+aside.listaConveres div.converConNuevoMensaje:hover {
+    background-image: linear-gradient(145deg, #00ffaa, #f73636);
+}
+
+aside.listaConveres div.converDisponible#agregar_conver {
+    padding: 10px;
+    background-color: rgb(127, 204, 255);
+    cursor: pointer;
+}
+
+aside.listaConveres div.converDisponible#agregar_conver:hover {
+    background-color: #00c8ff;
+}
+
+main.areaConverPrincipal {
+    left: 20%;
+    width: 80%;
+    position: fixed;
+    height: 100%;
+    padding: 8px;
+}
+
+main.areaConverPrincipal div.mensajes {
+    overflow-y: auto;
+    overflow-x: clip;
+}
+
+main.areaConverPrincipal div.mensajes div.mensaje img.fotoDePerfilMensaje {
+    position: absolute;
+}
+
+main.areaConverPrincipal div.mensajes div.mensaje div.mensajeMedio {
+    left: 44.8px;
+    position: relative;
+}
+
+.noMostrar {
+    display: none;
+}
+
+main.areaConverPrincipal div.enviarMensajes {
+    position: fixed;
+    bottom: 8px;
+}

@@ -7,7 +7,7 @@ async function generateKeyPair() {
             hash: "SHA-256",
         },
         true, // extraíble
-        ["encrypt", "decrypt"] // usos
+        ["encrypt", "decrypt", "wrapKey", "unwrapKey"] // usos
     );
     return keyPair;
 }
@@ -41,6 +41,43 @@ async function decryptDataAsymmetric(privateKey, encryptedData) {
         encryptedData
     );
     return new TextDecoder().decode(decryptedData);
+}
+
+// Encrypt -> devuelve objetos serializables (Base64)
+async function encryptDataAES(key, plaintext) {
+    // IV de 12 bytes (96 bits) recomendado para AES-GCM
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encoded = new TextEncoder().encode(plaintext);
+    const ciphertextBuf = await crypto.subtle.encrypt(
+        {
+            name: "AES-GCM",
+            iv: iv,
+        },
+        key,
+        encoded
+    );
+    return {
+        ciphertext: arrayBufferToBase64(ciphertextBuf),
+        iv: arrayBufferToBase64(iv.buffer) // usa tu función existente
+    };
+}
+
+// Decrypt <- acepta ciphertext e iv en Base64 (por ejemplo, resultado de JSON.parse)
+async function decryptDataAES(key, encryptedData) {
+    const ciphertextBase64 = encryptedData['ciphertext']
+    const ivBase64 = encryptedData['iv'];
+    const ciphertextBuf = base64ToArrayBuffer(ciphertextBase64);
+    const ivBuf = base64ToArrayBuffer(ivBase64);
+    const ivView = new Uint8Array(ivBuf);
+    const decrypted = await crypto.subtle.decrypt(
+        {
+            name: "AES-GCM",
+            iv: ivView,
+        },
+        key,
+        ciphertextBuf
+    );
+    return new TextDecoder().decode(decrypted);
 }
 
 function arrayBufferToBase64(buf) {
@@ -98,7 +135,7 @@ async function importPublicKeyFromJSON(jwk) {
         parsed,
         { name: 'RSA-OAEP', hash: 'SHA-256' },
         true,
-        ['encrypt']
+        ['encrypt', 'wrapKey']
     );
 }
 
@@ -116,7 +153,7 @@ async function importPrivateKeyFromLocalStorage(storedString) {
         jwk,
         { name: 'RSA-OAEP', hash: 'SHA-256' },
         true,
-        ['decrypt']
+        ['decrypt', 'unwrapKey']
     );
 }
 
@@ -137,6 +174,18 @@ async function makeRequest(url, method, body) {
     } catch (error) {
         console.error('Error posting data:', error);
     }
+}
+
+function formatearTiempo(timestamp) {
+    const date = new Date(timestamp);
+    
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0'); // Month is 0-indexed
+    const year = date.getFullYear();
+    
+    return `${hours}h${minutes} ${day}/${month}/${year}`;
 }
 
 async function registrarse() {
@@ -194,16 +243,19 @@ async function comenzarMD() {
     let convoKey = await generateAesKey();
     let uts = {} // Users to submit
     for (user of users) {
-        let uid = await makeRequest('/app/getUIDByUsername?username='+user, 'GET', {}).text();
-        let pubKey = await makeRequest('/app/getUserPublicKey?user='+uid, 'GET', {}).text();
+        let uid = await (await makeRequest('/app/getUIDByUsername?username='+user, 'GET')).text();
+        let pubKey = await (await makeRequest('/app/getUserPublicKey?user='+uid, 'GET')).text();
         pubKey = await importPublicKeyFromJSON(pubKey);
         let encryptedConvoKey = await wrapAesKeyWithPublicKey(pubKey, convoKey);
         uts[uid] = encryptedConvoKey;
     }
-    let liu = await makeRequest('/app/getLoggedInUser', 'GET', {}).text();
-    let pubKey = await makeRequest('/app/getUserPublicKey?user='+liu, 'GET', {}).text();
+    let liu = await (await makeRequest('/app/getLoggedInUser', 'GET')).text();
+    let pubKey = await (await makeRequest('/app/getUserPublicKey?user='+liu, 'GET')).text();
     pubKey = await importPublicKeyFromJSON(pubKey);
     let encryptedConvoKey = await wrapAesKeyWithPublicKey(pubKey, convoKey);
     uts[liu] = encryptedConvoKey;
-    let res = await makeRequest('/app/comenzarConversacion/md', 'POST', { 'users': uts});
+    let res = await makeRequest('/app/comenzarConversacion/md', 'POST', { 'users': uts, 'nombreConver': convoName});
+    if (res.status === 200) {
+        window.location.href = '../';
+    }
 }

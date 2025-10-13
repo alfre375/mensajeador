@@ -16,6 +16,10 @@ const httpsOptions = {
     cert: fs.readFileSync('./ssl/fullchain.pem')
 };
 
+const server = https.createServer(httpsOptions, app);
+const { Server } = require("socket.io");
+const io = new Server(server);
+
 // Carga los usuarios
 var users = [
     {
@@ -41,6 +45,7 @@ var sesiones = fs.existsSync('./data/sesiones.json') ?
 var converes = {
     'a8d3d493-434f-448c-bf88-2d69b9c211fa': {
         'conversation-type': 0, // Usuario a usuario, estilo mensaje directo
+        'conversation-name': 'Clase de Mx. Pineapple',
         'creation-date': new Date().getTime(),
         'conversation-users': {
             0: 'abcabcabc', // Key: uid del usuario; val: llave de conversación encriptada con llave pública del usuario
@@ -60,7 +65,8 @@ var converes = {
         ]
     }
 }
-converes = fs.existsSync('./data/conversaciones.json') ? fs.readFileSync('./data/conversaciones.json') : {}
+converes = fs.existsSync('./data/conversaciones.json') ?
+    JSON.parse(fs.readFileSync('./data/conversaciones.json').toString()) : {}
 
 // Carga los archivos de localización
 let loc_global = {};
@@ -97,8 +103,8 @@ function calculateSha256(inputString) {
 
 function getLoggedInUser(req) {
     let session = req.session.sessionId;
-    if (session) {
-        if (sesiones[session]['expiry'] > new Date().getTime()) {
+    if (session && sesiones[session]) {
+        if (sesiones[session]['expiry'] < new Date().getTime()) {
             delete sesiones[session];
             return undefined;
         }
@@ -189,11 +195,12 @@ function decryptAES(encryptedData, key) {
 }
 
 // Configure middleware
-app.use(cookieSession({
+const sessionMiddleware = cookieSession({
     name: 'session',
     keys: [process.env.SESSION_KEY_1 || 'sk1', process.env.SESSION_KEY_2 || 'sk2'],
     maxAge: 14 * 24 * 60 * 60 * 1000 // 14 days in ms
-}));
+});
+app.use(sessionMiddleware);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -373,8 +380,69 @@ app.get('/app/getLoggedInUser', (req, res) => {
     res.send(liu);
 })
 
+app.get('/app/converesDeUsuario', (req, res) => {
+    let liu = getLoggedInUser(req);
+    if (liu === undefined) {
+        res.json([]);
+        return;
+    }
+    let converesDeUsuario = users[liu]['conversations'];
+    res.json(converesDeUsuario);
+});
+
+app.get('/app/nombreDeConver', (req, res) => {
+    let conver = req.query.conver;
+    let liu = getLoggedInUser(req);
+    if (liu === undefined) {
+        res.statusCode = 401;
+        res.send('Debes iniciar sesión primero');
+        return;
+    }
+    if (!(conver in converes)) {
+        res.statusCode = 400;
+        res.send('No existe la conversación');
+        return;
+    }
+    if (converes[conver]['conversation-users'][liu] === undefined) {
+        res.statusCode = 403;
+        res.send('No estás en esta conversación');
+        return;
+    }
+    res.statusCode = 200;
+    res.send(converes[conver]['conversation-name']);
+});
+
+app.get('/app/llaveAESDeConver', (req, res) => {
+    let conver = req.query.conver;
+    let liu = getLoggedInUser(req);
+    if (liu === undefined) {
+        res.statusCode = 401;
+        res.send('Debes iniciar sesión primero');
+        return;
+    }
+    if (!conver in converes) {
+        res.statusCode = 400;
+        res.send('No existe la conversación');
+        return;
+    }
+    if (converes[conver]['conversation-users'][liu] === undefined) {
+        res.statusCode = 403;
+        res.send('No estás en esta conversación');
+        return;
+    }
+    res.statusCode = 200;
+    res.send(converes[conver]['conversation-users'][liu]);
+});
+
 app.post('/app/comenzarConversacion/md', (req, res) => {
     let usersToAdd = req.body.users;
+    let nombreConver = req.body.nombreConver;
+    
+    if (nombreConver.includes('"')) {
+        res.statusCode = 400;
+        res.send(translate('\\!!app.doble_comillas_inválido_en_nombre_de_conver!!\\'));
+        return;
+    }
     
     let date = new Date().getTime();
     let uuid = crypto.randomUUID();
@@ -383,12 +451,13 @@ app.post('/app/comenzarConversacion/md', (req, res) => {
         i++
         if (i > 500) {
             res.statusCode = 500;
-            res.send(translate('\\!!app.no_se_encontró_uuid_abierto!!\\', 'es'))
+            res.send(translate('\\!!app.no_se_encontró_uuid_abierto!!\\', 'es'));
+            return;
         }
         uuid = crypto.randomUUID();
     }
     
-    for (user of usersToAdd) {
+    for (user of Object.keys(usersToAdd)) {
         if (user in users) {
             users[user]['conversations'].push(uuid);
         } else {
@@ -398,6 +467,7 @@ app.post('/app/comenzarConversacion/md', (req, res) => {
     
     let conver = {
         'conversation-type': 0, // Usuario a usuario, estilo mensaje directo
+        'conversation-name': nombreConver,
         'creation-date': date,
         'conversation-users': usersToAdd,
         'conversation-settings': {
@@ -412,12 +482,91 @@ app.post('/app/comenzarConversacion/md', (req, res) => {
     res.send(uuid);
 });
 
+app.get('/app/fotoDePerfil', (req, res) => {
+    let uid = req.query.user;
+    uid = parseInt(uid);
+    if ((uid == NaN) || !(uid in users)) {
+        res.sendFile(__dirname + '/assets/imgs/FDP_predeterminado.svg');
+        return;
+    }
+    if (users[uid]['profile-picture'] !== undefined) {
+        res.send(users[uid]['profile-picture']);
+        return;
+    }
+    res.sendFile(__dirname + '/assets/imgs/FDP_predeterminado.svg');
+});
+
+app.get('/app/mensajesNuevos', (req, res) => {
+    let desde = parseInt(req.query.desde); // Mensaje más viejo
+    let hasta = parseInt(req.query.hasta); // Mensaje más nuevo
+    let conver = req.query.conver;
+    if (!(conver in converes)) {
+        res.statusCode = 400;
+        res.send('La conversación solicitada no existe');
+        return;
+    }
+    let mensajesDeConver = converes[conver]['messages'];
+    let n = mensajesDeConver.length;
+    if (!Number.isInteger(desde) || !Number.isInteger(hasta)) {
+        res.statusCode = 400;
+        res.send('Los numeros ingresados no son válidos');
+        return;
+    }
+
+    if (desde < 0) {
+        desde = 0;
+    }
+    
+    if (hasta < 0) {
+        hasta = 0;
+    }
+    
+    // convertir índices reversos a índices reales
+    let i0 = n - 1 - desde;
+    let i1 = n - 1 - hasta;
+    
+    if (i0 < 0) {
+        i0 = 0;
+    }
+    
+    if (i1 < 0) {
+        i1 = 0;
+    }
+
+    // ordenar para obtener segmento [min..max] inclusive
+    let desde_verificado = Math.min(i0, i1);
+    let hasta_verificado = Math.max(i0, i1);
+
+    // slice toma (start, endExclusive) -> por eso end + 1
+    let mensajesParaDevolver = mensajesDeConver.slice(desde_verificado, hasta_verificado + 1);
+    
+    res.send(mensajesParaDevolver);
+});
+
+app.get('/app/nombreParaMostrarPorUID', (req, res) => {
+    let uid = req.query.uid;
+    if (uid in users) {
+        res.send(users[uid]['display_name']);
+        return;
+    }
+    res.statusCode = 400;
+    res.send('El usuario especificado no se ha encontrado');
+});
+
 app.get('/style.css', (req, res) => {
     res.sendFile(__dirname + '/style.css');
 });
 
 app.get('/client.js', (req, res) => {
     res.sendFile(__dirname + '/client.js');
+});
+
+app.get('/chat.js', (req, res) => {
+    res.sendFile(__dirname + '/chat.js');
+});
+
+app.get('/socket.io/socket.io.js', (req, res) => {
+    res.sendFile(__dirname + '/node_modules/socket.io/client-dist/socket.io.js');
 });
 
 app.get('/assets/fonts/linjalipamanka-normal.woff', (req, res) => {
@@ -482,6 +631,55 @@ app.get('/admin/refreshLangFiles', (req, res) => {
     res.redirect('/');
 });
 
+// Socket.io
+io.use((socket, next) => {
+    sessionMiddleware(socket.request, socket.request.res || {}, next);
+});
+
+var socketIds = {} // key: user UUID, value: array of socketIds
+
+io.on('connection', (socket) => {
+    if (getLoggedInUser(socket.request) === undefined) {
+        socket.disconnect(true);
+    }
+    if (socketIds[getLoggedInUser(socket.request)] === undefined) {
+        socketIds[getLoggedInUser(socket.request)] = [];
+    }
+    socketIds[getLoggedInUser(socket.request)].push(socket.id);
+    //console.log(socketIds);
+    socket.on('disconnect', () => {
+        //console.log('user disconnected');
+        let liu = getLoggedInUser(socket.request);
+        socketIds[liu].splice(socketIds[liu].indexOf(socket.id), 1)
+    });
+    socket.on('enviarMsg', (msg) => {
+        //console.log('message: ' + JSON.stringify(msg));
+        // Agregar mensaje a conversación
+        let datosDeMensaje = msg['datosDeMensaje'];
+        let conver = msg['conver'];
+        if ((conver in converes) && (getLoggedInUser(socket.request) in converes[conver]['conversation-users'])) {
+            converes[conver]['messages'].push(datosDeMensaje);
+            
+            // Emitir a miembros en linea
+            let miembrosParaEmitir = Object.keys(converes[conver]['conversation-users']);
+            let socketsParaEmitir = [];
+            //console.log(miembrosParaEmitir);
+            for (miembro of miembrosParaEmitir) {
+                if (miembro in socketIds) {
+                    for (id of socketIds[miembro]) {
+                        socketsParaEmitir.push(id);
+                    }
+                }
+            }
+            for (socketId of socketsParaEmitir) {
+                io.to(socketId).emit('recibirMensaje', msg);
+            }
+            
+            // Notificar a miembros listados para notificación
+        }
+    });
+});
+
 // Save data when terminating
 function saveData() {
     fs.writeFileSync('./data/users.json', JSON.stringify(users));
@@ -496,8 +694,6 @@ process.on('SIGTERM', () => {
     saveData();
     process.exit(0);
 })
-
-const server = https.createServer(httpsOptions, app);
 
 server.listen(port, () => {
     console.log(`Mensajeador corriendo en puerto ${port}`);
