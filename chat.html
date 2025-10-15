@@ -14,6 +14,11 @@
         <div class="converDisponible" id="uuid_de_conver" onclick="abrirConver('uuid_de_conver')">
             NOMBRE_CONVER
         </div>
+        <div class="converDisponible cuenta" onclick="window.location.href = './configurarCuenta'">
+            <img src="/app/fotoDePerfil?user=<!--UID-DE-USUARIO-->" width="36.8px" height="36.8px">
+            <span><!--NOMBRE_DE_PERFIL--></span><br>
+            <span><!--NOMBRE_DE_USUARIO--></span>
+        </div>
     </aside>
     <main class="areaConverPrincipal" id="areaConverPrincipal">
         <div class="mensajes" id="mensajes"> <!--Espacio de mensajes-->
@@ -34,14 +39,30 @@
             <div class="noMostrar" id="espacioParaMensajeDespues"></div>
         </div>
         <div class="enviarMensajes" id="enviarMensajes">
-            <input type="text" name="msg" id="msg" style="font-family: Arial, linjaLipamanka;">
-            <button type="button" onclick="enviarMensaje()">
-                <img src="./assets/images/enviar.png" alt="Enviar Mensaje" height="16px" width="16px">
+            <input type="text" name="msg" id="msg" style="font-family: Arial, linjaLipamanka;" autofocus>
+            <button type="button" onclick="enviarMensaje()" class="btnEnviarMsg">
+                <img src="./assets/images/enviar.png" alt="Enviar Mensaje" class="btnEnviarMsg">
             </button>
         </div>
     </main>
     <script src="./socket.io/socket.io.js"></script>
     <script src="./client.js"></script>
     <script src="./chat.js"></script>
+    <script>
+        let inputTextoMsg = document.getElementById('msg');
+        let shiftOprimido = false;
+        inputTextoMsg.addEventListener('keydown', (e) => {
+            if ((e.key === 'Enter') && (shiftOprimido === false)) {
+                enviarMensaje();
+            } else if (e.key === 'Shift') {
+                shiftOprimido = true;
+            }
+        });
+        inputTextoMsg.addEventListener('keyup', (e) => {
+            if (e.key === 'Shift') {
+                shiftOprimido = false;
+            }
+        });
+    </script>
 </body>
 </html>

@@ -9,6 +9,8 @@ const cookieSession = require('cookie-session');
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const CryptoJS = require('crypto-js');
+const webpush = require('web-push');
+const cors = require('cors');
 const twoWeeks = 1000 * 60 * 60 * 24 * 14;
 
 const httpsOptions = {
@@ -66,7 +68,7 @@ var converes = {
     }
 }
 converes = fs.existsSync('./data/conversaciones.json') ?
-    JSON.parse(fs.readFileSync('./data/conversaciones.json').toString()) : {}
+    JSON.parse(fs.readFileSync('./data/conversaciones.json').toString()) : {};
 
 // Carga los archivos de localización
 let loc_global = {};
@@ -75,6 +77,55 @@ function refreshLangFiles() {
         .toString());
 }
 refreshLangFiles();
+
+// Configuración de webpush
+const publicVapidKey = process.env.VAPID_PUBLIC_KEY;
+const privateVapidKey = process.env.VAPID_PRIVATE_KEY;
+if (!publicVapidKey || !privateVapidKey) {
+    console.error("Faltan VAPID keys en .env");
+    process.exit(1);
+}
+webpush.setVapidDetails(
+    "mailto:example@yourdomain.org",
+    publicVapidKey,
+    privateVapidKey
+);
+var subscripciones = fs.existsSync('./data/subscripciones.json') ?
+    JSON.parse(fs.readFileSync('./data/subscripciones.json').toString()) : {};
+
+function agregarSubscripcion(req, subscripcion) {
+    let liu = getLoggedInUser(req);
+    if (liu === undefined) { return false; }
+    if (!Object.keys(subscripciones).includes(liu)) {
+        subscripciones[liu] = [];
+    }
+    subscripciones[liu].push(subscripcion);
+    return true;
+}
+function quitarSubscripcion(subscripcion) {
+    for (user of subscripciones) {
+        for (subscripcion_subses in subscripciones[user]) {
+            if (subscripciones[user][subscripcion_subses] == subscripcion) {
+                subscripciones[user][subscripcion_subses] = undefined;
+            }
+        }
+    }
+}
+async function enviarNotificacion(subscripcion, payload) {
+    if (typeof payload !== 'string') {
+        payload = JSON.stringify(payload);
+    }
+    try {
+        await webpush.sendNotification(subscripcion, payload);
+        return { 'success': true };
+    } catch (err) {
+        if (err.statusCode === 404 || err.statusCode === 410) {
+            quitarSubscripcion(subscripcion);
+            return { 'success': false, 'quitado': true }
+        }
+        return { 'success': false, 'err': err }
+    }
+}
 
 // Functions
 function loadWebpage(filename, req, data) {
@@ -202,24 +253,30 @@ const sessionMiddleware = cookieSession({
 });
 app.use(sessionMiddleware);
 
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Primary endpoints
 app.get('/', (req, res) => {
-    if (getLoggedInUser(req) === undefined) {
+    let liu = getLoggedInUser(req)
+    if (liu === undefined) {
         res.send(loadWebpage('index.html', req, {}));
         return;
     }
-    if (users[getLoggedInUser(req)]['2fa_key'] === undefined) {
+    if (users[liu]['2fa_key'] === undefined) {
         res.send(translate('\\!!general.debes_configurar_a2f!!\\','es'));
         return;
     }
-    if (users[getLoggedInUser(req)]['public_key'] === undefined) {
+    if (users[liu]['public_key'] === undefined) {
         res.send(loadWebpage('createUserKeypair.html', req, {}));
         return;
     }
-    res.send(loadWebpage('chat.html', req, {}));
+    res.send(loadWebpage('chat.html', req, {
+        'UID-DE-USUARIO': liu,
+        'NOMBRE_DE_PERFIL': users[liu]['display_name'],
+        'NOMBRE_DE_USUARIO': users[liu]['uname']
+    }));
 });
 
 app.get('/configurarA2F', (req, res) => {
@@ -331,6 +388,34 @@ app.post('/registrar', (req, res) => {
     res.statusCode = 200;
     res.redirect('/');
     passwd = undefined;
+});
+
+app.get('/configurarCuenta', (req, res) => {
+    let liu = getLoggedInUser(req);
+    if (liu === undefined) { res.redirect('/login'); }
+    res.send(loadWebpage('configurarCuenta.html', req, {}));
+})
+
+app.post('/subscribe', (req, res) => {
+    let subscripcion = req.body.subscripcion;
+    if (!subscripcion) {
+        return res.status(400).json({ error: 'Falta subscripción' });
+    }
+    agregarSubscripcion(req, subscripcion);
+    res.status(201).json({ success: true });
+});
+
+app.post('/unsubscribe', (req, res) => {
+    let subscripcion = req.body.subscripcion;
+    if (!subscripcion) {
+        return res.status(400).json({ success: false, error: 'Falta subscripción' });
+    }
+    quitarSubscripcion(subscripcion);
+    res.status(200).json({ success: true });
+})
+
+app.get('/vapidPublicKey', (req, res) => {
+    res.json({ publicKey: publicVapidKey });
 });
 
 app.get('/comenzarConversacion/md', (req, res) => {
@@ -565,6 +650,10 @@ app.get('/chat.js', (req, res) => {
     res.sendFile(__dirname + '/chat.js');
 });
 
+app.get('/service-worker.js', (req, res) => {
+    res.sendFile(__dirname + '/service-worker.js')
+})
+
 app.get('/socket.io/socket.io.js', (req, res) => {
     res.sendFile(__dirname + '/node_modules/socket.io/client-dist/socket.io.js');
 });
@@ -663,9 +752,11 @@ io.on('connection', (socket) => {
             // Emitir a miembros en linea
             let miembrosParaEmitir = Object.keys(converes[conver]['conversation-users']);
             let socketsParaEmitir = [];
+            let miembrosEnLinea = [];
             //console.log(miembrosParaEmitir);
             for (miembro of miembrosParaEmitir) {
                 if (miembro in socketIds) {
+                    miembrosEnLinea.push(miembro);
                     for (id of socketIds[miembro]) {
                         socketsParaEmitir.push(id);
                     }
@@ -676,6 +767,22 @@ io.on('connection', (socket) => {
             }
             
             // Notificar a miembros listados para notificación
+            for (miembro of msg['notificar']) {
+                let uidMiembro = getUserByUsername(miembro);
+                if (uidMiembro === undefined) { continue; }
+                if (!Object.keys(converes[conver]['conversation-users']).includes(uidMiembro)) { continue; }
+                if (!miembrosEnLinea.includes(uidMiembro)) {
+                    if (Object.keys(subscripciones).includes(uidMiembro)) {
+                        for (subscripcion of subscripciones[uidMiembro]) {
+                            enviarNotificacion(subscripcion, {
+                                title: 'Nuevo mensaje',
+                                body: 'Alguien te ha mandado un mensaje en ' + converes[conver]['conversation-name'],
+                                url: '/'
+                            });
+                        }
+                    }
+                }
+            }
         }
     });
 });
@@ -685,6 +792,7 @@ function saveData() {
     fs.writeFileSync('./data/users.json', JSON.stringify(users));
     fs.writeFileSync('./data/sesiones.json', JSON.stringify(sesiones));
     fs.writeFileSync('./data/conversaciones.json', JSON.stringify(converes));
+    fs.writeFileSync('./data/subscripciones.json', JSON.stringify(subscripciones));
 }
 process.on('SIGINT', () => {
     saveData();

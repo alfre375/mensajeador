@@ -95,6 +95,66 @@ function base64ToArrayBuffer(b64) {
     return bytes.buffer;
 }
 
+function urlBase64ToUint8Array(base64String) {
+    // standard
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+    const rawData = atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+}
+
+async function registerServiceWorker() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        console.warn('Push o Service Worker no soportado');
+        return null;
+    }
+    let reg = await navigator.serviceWorker.getRegistration('/service-worker.js');
+    if (!reg) { reg = await navigator.serviceWorker.register('/service-worker.js'); }
+    console.log('Service Worker registrado', reg);
+    return reg;
+}
+
+async function subscribirseParaNotificaciones() {
+    const permiso = await Notification.requestPermission();
+    if (permiso !== 'granted') { throw new Error('Permiso de notificaciones denegado'); }
+    
+    const reg = await registerServiceWorker();
+    if (!reg) { throw new Error('No se pudo registrar service worker'); }
+    
+    // Obtener clave pública de vapid del servidor
+    const resp = await fetch('/vapidPublicKey');
+    const { publicKey } = await resp.json();
+    const applicationServerKey = urlBase64ToUint8Array(publicKey);
+    
+    // Subscribe al usuario
+    const subscripcion = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey
+    });
+    
+    // Envía al servidor
+    await makeRequest('/subscribe', 'POST', {subscripcion});
+    
+    return subscripcion;
+}
+
+async function dessubscribirseParaNotificaciones() {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) { throw new Error('No hay service worker registrado'); }
+    
+    const subscripcion = await reg.pushManager.getSubscription();
+    if (!subscripcion) { return { success: true }; }
+    
+    await makeRequest('/unsubscribe', 'POST', { subscripcion });
+    const dessubscripcion = await subscripcion.unsubscribe();
+    
+    return { success: dessubscripcion };
+}
+
 // Wrap AES key with RSA public key -> base64 string
 async function wrapAesKeyWithPublicKey(publicKey, aesKey) {
     // 'raw' format wraps the AES key bytes

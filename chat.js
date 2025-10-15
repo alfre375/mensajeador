@@ -34,6 +34,8 @@ async function abrirConver(converParaAbrir) {
         if (objetoConver.classList.contains('converConNuevoMensaje')) {
             objetoConver.classList.remove('converConNuevoMensaje');
         }
+        let divMensajes = document.getElementById('mensajes');
+        divMensajes.scrollTop = divMensajes.scrollHeight;
     }
 }
 async function start() {
@@ -69,18 +71,26 @@ async function popularListaDeConveres() {
 
 async function enviarMensaje() {
     let msg = document.getElementById('msg');
+    let contenidoMsg = msg.value;
+    if (contenidoMsg.trim() === '') { return; }
+    let notificar = [];
+    for (n of contenidoMsg.split(' ')) {
+        if (n.startsWith('@')) {
+            notificar.push(n.slice(1));
+        }
+    }
     let timestamp = new Date().getTime();
     let msgJSON = {
         'sent-by': uid,
         'type': 0,
-        'content': msg.value,
+        'content': contenidoMsg,
         'sent-at': timestamp
     };
     let encryptedMsg = await encryptDataAES(llaveAesDeConver,JSON.stringify(msgJSON));
     let contentToEmit = {
         'datosDeMensaje': encryptedMsg,
         'conver': converAbierto,
-        'notificar': []
+        'notificar': notificar
     };
     socket.emit('enviarMsg', contentToEmit);
     msg.value = '';
@@ -133,11 +143,15 @@ function resetearAreaDeMensajes() {
 
 socket.on('recibirMensaje', async (msg) => {
     let converDeMensaje = msg['conver'];
-    console.log(converDeMensaje);
+    //console.log(converDeMensaje);
     if (converDeMensaje === converAbierto) {
         // Averiguar y desencriptar mensaje
         let mensaje = msg['datosDeMensaje'];
         mensaje = JSON.parse(await decryptDataAES(llaveAesDeConver, mensaje));
+        
+        // Averiguar si está el usuario hasta abajo de la lista de mensajes
+        let divMensajes = document.getElementById('mensajes');
+        let estaHastaAbajo = divMensajes.scrollHeight - divMensajes.scrollTop <= divMensajes.clientHeight + 0.25;
         
         // Agregar mensaje a lista de mensajes
         let uidDeEnviador = mensaje['sent-by']
@@ -158,6 +172,9 @@ socket.on('recibirMensaje', async (msg) => {
         let epmd = document.getElementById('espacioParaMensajeDespues');
         let epmdHTML = epmd.outerHTML;
         epmd.outerHTML = contenidoParaIngresar + epmdHTML;
+        
+        // Si el usuario estaba hasta abajo antes de agregar el mensaje, bajalos hasta abajo de nuevo
+        if (estaHastaAbajo) { divMensajes.scrollTop = divMensajes.scrollHeight; }
     } else if (converes.includes(converDeMensaje)) {
         let objetoConver = document.getElementById(converDeMensaje);
         if (!objetoConver.classList.contains('converConNuevoMensaje')) {
