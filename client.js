@@ -182,6 +182,38 @@ async function unwrapAesKeyWithPrivateKey(privateKey, wrappedBase64) {
     return aesKey;
 }
 
+// Envolver una clave privada RSA con otra clave pública RSA
+async function wrapPrivateKeyWithPublicKey(publicKey, privateKeyToWrap) {
+    // Usamos wrapKey con formato 'pkcs8'
+    const wrappedBuf = await crypto.subtle.wrapKey(
+        'pkcs8',                 // formato objetivo para exportar la clave
+        privateKeyToWrap,        // la clave privada que queremos envolver
+        publicKey,               // clave pública RSA como wrapping key
+        { name: 'RSA-OAEP' }     // algoritmo de envoltura
+    );
+
+    // Convertimos a Base64 para poner en JSON después
+    return arrayBufferToBase64(wrappedBuf);
+}
+
+// Desenvolver (descifrar) la clave privada RSA
+async function unwrapPrivateKeyWithPrivateKey(privateKeyUnwrapper, wrappedBase64) {
+    const wrappedBuf = base64ToArrayBuffer(wrappedBase64);
+
+    // Unwrap importará la clave de vuelta como CryptoKey
+    const unwrappedKey = await crypto.subtle.unwrapKey(
+        'pkcs8',                      // formato de la clave que estaba envuelta
+        wrappedBuf,                   // datos envueltos (bytes)
+        privateKeyUnwrapper,          // clave privada que desenrolla
+        { name: 'RSA-OAEP' },         // algoritmo de desenrollado
+        { name: 'RSA-OAEP', hash: 'SHA-256' }, // algoritmo de la clave resultante
+        true,                         // extractable: true si quieres volver a exportar
+        ['decrypt','unwrapKey']       // usos que le vas a dar
+    );
+
+    return unwrappedKey;
+}
+
 async function exportPublicKeyForJSON(publicKey) {
     // Regresa un objeto JWK seguro para JSON.stringify();
     return await crypto.subtle.exportKey('jwk', publicKey);
@@ -215,6 +247,67 @@ async function importPrivateKeyFromLocalStorage(storedString) {
         true,
         ['decrypt', 'unwrapKey']
     );
+}
+
+async function encryptPrivateKeyHybrid(publicKey, privateKeyJwkString) {
+
+    // Generar AES temporal
+    const aesKey = await crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+    );
+
+    // Cifrar la clave privada (string)
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encoded = new TextEncoder().encode(privateKeyJwkString);
+
+    const ciphertext = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        aesKey,
+        encoded
+    );
+
+    // Envolver AES con RSA
+    const wrappedAesKey = await crypto.subtle.wrapKey(
+        "raw",
+        aesKey,
+        publicKey,
+        { name: "RSA-OAEP" }
+    );
+
+    // Devolver todo serializable
+    return {
+        wrappedKey: arrayBufferToBase64(wrappedAesKey),
+        ciphertext: arrayBufferToBase64(ciphertext),
+        iv: arrayBufferToBase64(iv.buffer)
+    };
+}
+
+async function decryptPrivateKeyHybrid(privateKey, payload) {
+
+    // Unwrap AES
+    const aesKey = await crypto.subtle.unwrapKey(
+        "raw",
+        base64ToArrayBuffer(payload.wrappedKey),
+        privateKey,
+        { name: "RSA-OAEP" },
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["decrypt"]
+    );
+
+    // Descifrar contenido
+    const decrypted = await crypto.subtle.decrypt(
+        {
+            name: "AES-GCM",
+            iv: new Uint8Array(base64ToArrayBuffer(payload.iv))
+        },
+        aesKey,
+        base64ToArrayBuffer(payload.ciphertext)
+    );
+
+    return new TextDecoder().decode(decrypted);
 }
 
 async function makeRequest(url, method, body) {

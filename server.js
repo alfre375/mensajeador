@@ -116,7 +116,7 @@ async function enviarNotificacion(subscripcion, payload) {
         payload = JSON.stringify(payload);
     }
     try {
-        await webpush.sendNotification(subscripcion, payload);
+        let resultado = await webpush.sendNotification(subscripcion, payload);
         return { 'success': true };
     } catch (err) {
         if (err.statusCode === 404 || err.statusCode === 410) {
@@ -283,7 +283,7 @@ app.get('/configurarA2F', (req, res) => {
     let mfa_key = gen2FAKey();
     users[getLoggedInUser(req)]['2fa_key'] = encryptAES(mfa_key, process.env.SERVER_AES_KEY);
     res.send(loadWebpage('2fa.html', req, {'CÓDIGO_A2F':mfa_key}));
-    delete mfa_key;
+    mfa_key = undefined;
 })
 
 app.get('/login', (req, res) => {
@@ -412,7 +412,7 @@ app.post('/unsubscribe', (req, res) => {
     }
     quitarSubscripcion(subscripcion);
     res.status(200).json({ success: true });
-})
+});
 
 app.get('/vapidPublicKey', (req, res) => {
     res.json({ publicKey: publicVapidKey });
@@ -426,6 +426,22 @@ app.get('/comenzarConversacion/md', (req, res) => {
     }
     res.statusCode = 200;
     res.send(loadWebpage('comenzarMD.html', req, {}));
+});
+
+app.get('/enviarClavePrivada', (req, res) => {
+    if (!getLoggedInUser(req)) {
+        res.redirect('/login');
+        return;
+    }
+    res.send(loadWebpage('enviarClavePrivada.html', req, {}));
+});
+
+app.get('/recibirClavePrivada', (req, res) => {
+    if (!getLoggedInUser(req)) {
+        res.redirect('/login');
+        return;
+    }
+    res.send(loadWebpage('recibirClavePrivada.html', req, {}));
 });
 
 app.get('/app/getUIDByUsername', (req, res) => {
@@ -650,9 +666,17 @@ app.get('/chat.js', (req, res) => {
     res.sendFile(__dirname + '/chat.js');
 });
 
+app.get('/enviarClavePrivada.js', (req, res) => {
+    res.sendFile(__dirname + '/enviarClavePrivada.js');
+});
+
+app.get('/recibirClavePrivada.js', (req, res) => {
+    res.sendFile(__dirname + '/recibirClavePrivada.js');
+});
+
 app.get('/service-worker.js', (req, res) => {
-    res.sendFile(__dirname + '/service-worker.js')
-})
+    res.sendFile(__dirname + '/service-worker.js');
+});
 
 app.get('/socket.io/socket.io.js', (req, res) => {
     res.sendFile(__dirname + '/node_modules/socket.io/client-dist/socket.io.js');
@@ -726,6 +750,7 @@ io.use((socket, next) => {
 });
 
 var socketIds = {} // key: user UUID, value: array of socketIds
+var intencionesDeEnviarClavePrivada = {} // key: id de intención, valor: {socketId, userId, IP}
 
 io.on('connection', (socket) => {
     if (getLoggedInUser(socket.request) === undefined) {
@@ -741,6 +766,8 @@ io.on('connection', (socket) => {
         let liu = getLoggedInUser(socket.request);
         socketIds[liu].splice(socketIds[liu].indexOf(socket.id), 1)
     });
+    
+    // Sistema de mensajes
     socket.on('enviarMsg', (msg) => {
         //console.log('message: ' + JSON.stringify(msg));
         // Agregar mensaje a conversación
@@ -784,6 +811,46 @@ io.on('connection', (socket) => {
                 }
             }
         }
+    });
+    
+    // Envio de clave privada de un dispositivo a otro
+    socket.on('intencionEnviarClavePrivada', (datos) => { // Paso 1 (emitido por cliente enviador)
+        let idDeIntencion = datos['id'];
+        if (!(idDeIntencion in Object.keys(intencionesDeEnviarClavePrivada))) {
+            intencionesDeEnviarClavePrivada[idDeIntencion] = {
+                'socketId': socket.id,
+                'userid': getLoggedInUser(socket.request),
+                'ip': socket.handshake.address
+            };
+        } else {
+            socket.to(socket.id).emit('idIECPExistente', idDeIntencion);
+        }
+    });
+    socket.on('intencionRecibirClavePrivada', (datos) => { // Paso 2 (emitido por cliente recibidor)
+        let idDeIntencion = datos['id'];
+        if (Object.keys(intencionesDeEnviarClavePrivada).includes(idDeIntencion)) {
+            let intencionDeEnviar = intencionesDeEnviarClavePrivada[idDeIntencion];
+            let clavePublicaDeEnvio = datos['clave-publica'];
+            let ipDeRecibidor = socket.handshake.address;
+            let usuarioRecibidor = getLoggedInUser(socket.request);
+            
+            // Verificar identidad del usuario (recuerda que el ciente mandador también debe revisar esto)
+            if (ipDeRecibidor === intencionDeEnviar['ip']) {
+                if (usuarioRecibidor === intencionDeEnviar['userid']) {
+                    io.to(intencionDeEnviar['socketId']).emit('resIntEnvClavePrivada', {
+                        clavePublicaDeEnvio,
+                        //ipDeRecibidor,
+                        //usuarioRecibidor,
+                        'socketDeRecibidor': socket.id
+                    });
+                }
+            }
+        }
+    });
+    socket.on('enviarClavePrivada', (datos) => {
+        let usuarioRecibidor = datos['usuario-recibidor'];
+        let claveEncriptada = datos['clave-encriptada'];
+        io.to(usuarioRecibidor).emit('recibirClavePrivada', claveEncriptada);
     });
 });
 
