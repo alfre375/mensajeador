@@ -1,5 +1,7 @@
 {
     "índice.título":"Mensajeador",
+    "índice.crear_cuenta": "Crear una nueva cuenta",
+    "índice.iniciar_sesión": "Iniciar Sesión",
     "iniciar_sesión.título": "Iniciar Sesión | Mensajeador",
     "iniciar_sesión.nombre_de_usuario": "Nombre de usuario: ",
     "iniciar_sesión.contraseña": "Contraseña: ",
@@ -29,7 +31,7 @@
     "configurar_a2f.instalar_autenticador_apple": "Haz clic aquí para ir a descargar el Autenticador de Google en el App Store",
     "comenzar_md.título": "Comenzar MD | Mensajeador",
     "comenzar_md.nombre_de_usuario": "Nombre de usuario de otros conversantes (separados por coma)",
-    "comenzar_md.nombre_de_conversación": "Nombre de la conversación — no debe contener doble comillas (\")",
+    "comenzar_md.nombre_de_conversación": "Nombre de la conversación — no debe contener doble comillas (\") ni ascii 0x1F",
     "comenzar_md.crear": "Crear conversación",
     "chat.título": "Conversa | Mensajeador",
     "configurar_cuenta.título": "Configurar Cuenta | Mensajeador",
@@ -40,5 +42,9 @@
     "app.usuario_no_existe": "El usuario que se ha solicitado no existe",
     "app.uid_no_válido": "El UID ingresado no es válido",
     "app.doble_comillas_inválido_en_nombre_de_conver": "El nombre de la conversación no puede tener doble comillas (\")",
-    "app.no_se_encontró_uuid_abierto": "No se pudo encontrar un UUID disponible"
+    "app.no_se_encontró_uuid_abierto": "No se pudo encontrar un UUID disponible",
+    "recibir_clave_privada.título": "Recibir y Guardar Clave Privada | Mensajeador",
+    "recibir_clave_privada.comenzar": "Recibir y guardar clave privada de otro dispositivo (primero debes iniciar el proceso de enviar)",
+    "enviar_clave_privada.título": "Enviar Clave Privada | Mensajeador",
+    "enviar_clave_privada.comenzar": "Enviar de forma segura su clave privada a otro dispositivo"
 }

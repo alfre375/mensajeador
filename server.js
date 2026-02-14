@@ -73,8 +73,8 @@ converes = fs.existsSync('./data/conversaciones.json') ?
 // Carga los archivos de localización
 let loc_global = {};
 function refreshLangFiles() {
-    loc_global['es'] = JSON.parse(fs.readFileSync(`locale/es.json`)
-        .toString());
+    loc_global['es'] = JSON.parse(fs.readFileSync(`locale/es.json`).toString());
+    loc_global['en'] = JSON.parse(fs.readFileSync(`locale/en.json`).toString());
 }
 refreshLangFiles();
 
@@ -137,7 +137,63 @@ function loadWebpage(filename, req, data) {
     }
 
     // Get correct locale
+    // Default (priority 0)
     locale = 'es';
+    
+    // Browser (priority 1)
+    browser_locale = req.headers['accept-language'];
+    appropriate_browser_locale_found = false;
+    browser_locale.replaceAll(' ','');
+    browser_locale.split(',');
+    for (lang in browser_locale) {
+        if (appropriate_browser_locale_found) break;
+        lang = lang.split(';')[0];
+        switch (lang) {
+            // Spanish
+            case "es":
+                locale = 'es';
+                appropriate_browser_locale_found = true;
+                break;
+            case "es-ES":
+                locale = 'es';
+                appropriate_browser_locale_found = true;
+                break;
+            case "es-MX":
+                locale = 'es';
+                appropriate_browser_locale_found = true;
+                break;
+            case "es-US":
+                locale = 'es';
+                appropriate_browser_locale_found = true;
+                break;
+            case "es-419":
+                locale = 'es';
+                appropriate_browser_locale_found = true;
+                break;
+                
+            // English
+            case "en":
+                locale = 'en';
+                appropriate_browser_locale_found = true;
+                break;
+            case "en-GB":
+                locale = 'en';
+                appropriate_browser_locale_found = true;
+                break;
+            case "en-CA":
+                locale = 'en';
+                appropriate_browser_locale_found = true;
+                break;
+            case "en-AU":
+                locale = 'en';
+                appropriate_browser_locale_found = true;
+                break;
+            case "en-US":
+                locale = 'en';
+                appropriate_browser_locale_found = true;
+                break;
+        }
+    }
 
     // Localise
     webpage = translate(webpage, locale);
@@ -185,10 +241,11 @@ function saltGen(len,characters) {
 
 function translate(text, locale) {
     // Ge the locale file
-    let loc = loc_global['es'];
+    let loc = loc_global[locale];
+    let loc_default = loc_global['es'];
     // Insert data
     for (key in loc) {
-        text = text.replaceAll('\\!!' + key + '!!\\', loc[key]);
+        text = text.replaceAll('\\!!' + key + '!!\\', loc[key] || loc_default[key]);
     }
     // Return translated text
     return text;
