@@ -75,6 +75,7 @@ let loc_global = {};
 function refreshLangFiles() {
     loc_global['es'] = JSON.parse(fs.readFileSync(`locale/es.json`).toString());
     loc_global['en'] = JSON.parse(fs.readFileSync(`locale/en.json`).toString());
+    loc_global['zh'] = JSON.parse(fs.readFileSync(`locale/zh.json`).toString());
 }
 refreshLangFiles();
 
@@ -145,6 +146,7 @@ function loadWebpage(filename, req, data) {
     appropriate_browser_locale_found = false;
     browser_locale.replaceAll(' ','');
     browser_locale.split(',');
+    if (req.session.lang) browser_locale = [req.session.lang, ...browser_locale]; // Website-specific (top priority/priority 2)
     for (lang in browser_locale) {
         if (appropriate_browser_locale_found) break;
         lang = lang.split(';')[0];
@@ -190,6 +192,24 @@ function loadWebpage(filename, req, data) {
                 break;
             case "en-US":
                 locale = 'en';
+                appropriate_browser_locale_found = true;
+                break;
+                
+            // Chinese (simplified)
+            case "zh":
+                locale = 'zh';
+                appropriate_browser_locale_found = true;
+                break;
+            case "zh-Hans":
+                locale = 'zh';
+                appropriate_browser_locale_found = true;
+                break;
+            case "zh-CN":
+                locale = 'zh';
+                appropriate_browser_locale_found = true;
+                break;
+            case "zh-SG":
+                locale = 'zh';
                 appropriate_browser_locale_found = true;
                 break;
         }
@@ -499,6 +519,31 @@ app.get('/recibirClavePrivada', (req, res) => {
         return;
     }
     res.send(loadWebpage('recibirClavePrivada.html', req, {}));
+});
+
+app.get('/setlang/es', (req, res) => {
+    req.session.lang = 'es';
+    res.redirect('/');
+});
+
+app.get('/setlang/en', (req, res) => {
+    req.session.lang = 'en';
+    res.redirect('/');
+});
+
+app.get('/setlang/zh', (req, res) => {
+    req.session.lang = 'zh';
+    res.redirect('/');
+});
+
+app.get('/setlang/zh-Hans', (req, res) => {
+    req.session.lang = 'zh-Hans';
+    res.redirect('/');
+});
+
+app.get('/setlang/clear', (req, res) => {
+    req.session.lang = undefined;
+    res.redirect('/');
 });
 
 app.get('/app/getUIDByUsername', (req, res) => {
