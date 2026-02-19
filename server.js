@@ -11,6 +11,9 @@ const QRCode = require('qrcode');
 const CryptoJS = require('crypto-js');
 const webpush = require('web-push');
 const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+const sharp = require('sharp');
 const twoWeeks = 1000 * 60 * 60 * 24 * 14;
 
 const httpsOptions = {
@@ -76,8 +79,16 @@ function refreshLangFiles() {
     loc_global['es'] = JSON.parse(fs.readFileSync(`locale/es.json`).toString());
     loc_global['en'] = JSON.parse(fs.readFileSync(`locale/en.json`).toString());
     loc_global['zh'] = JSON.parse(fs.readFileSync(`locale/zh.json`).toString());
+    loc_global['tok-sp'] = JSON.parse(fs.readFileSync(`locale/tok-sp.json`).toString());
 }
 refreshLangFiles();
+
+// Crear directorio de /data/pfp
+let pfp_dir = path.join(__dirname, 'data/pfp');
+
+if (!fs.existsSync(pfp_dir)) {
+    fs.mkdirSync(pfp_dir);
+}
 
 // Configuración de webpush
 const publicVapidKey = process.env.VAPID_PUBLIC_KEY;
@@ -128,92 +139,126 @@ async function enviarNotificacion(subscripcion, payload) {
     }
 }
 
-// Functions
-function loadWebpage(filename, req, data) {
-    let webpage = fs.readFileSync(filename).toString();
-
-    // Insert data
-    for (key in data) {
-        webpage = webpage.replaceAll('<!--'+key+'-->', data[key]);
+// Multer
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 5 * 1024 * 1024 // 5 MB to B
+    },
+    fileFilter: (req, file, cb) => {
+        const allowed = ['image/png', 'image/jpeg', 'image/webp'];
+        if (!allowed.includes(file.mimetype)) {
+            return cb(new Error('Only png, jpeg, and webp allowed'), false);
+        }
+        cb(null, true);
     }
+});
 
-    // Get correct locale
-    // Default (priority 0)
-    locale = 'es';
+// Functions
+function getUserLocales(req) {
+    let locale = [];
     
     // Browser (priority 1)
-    browser_locale = req.headers['accept-language'];
-    appropriate_browser_locale_found = false;
+    let browser_locale = req.headers['accept-language'];
+    let appropriate_browser_locale_found = false;
     browser_locale.replaceAll(' ','');
-    browser_locale.split(',');
-    if (req.session.lang) browser_locale = [req.session.lang, ...browser_locale]; // Website-specific (top priority/priority 2)
-    for (lang in browser_locale) {
-        if (appropriate_browser_locale_found) break;
+    browser_locale = browser_locale.split(',');
+    let locale_list = []
+    if (req.session.lang) {
+        locale_list = [...req.session.lang, ...browser_locale, 'es'];
+    } else {
+        locale_list = [...browser_locale, 'es'];
+    }
+    for (let lang of locale_list) {
         lang = lang.split(';')[0];
         switch (lang) {
             // Spanish
             case "es":
-                locale = 'es';
+                locale.push('es');
                 appropriate_browser_locale_found = true;
                 break;
             case "es-ES":
-                locale = 'es';
+                locale.push('es');
                 appropriate_browser_locale_found = true;
                 break;
             case "es-MX":
-                locale = 'es';
+                locale.push('es');
                 appropriate_browser_locale_found = true;
                 break;
             case "es-US":
-                locale = 'es';
+                locale.push('es');
                 appropriate_browser_locale_found = true;
                 break;
             case "es-419":
-                locale = 'es';
+                locale.push('es');
                 appropriate_browser_locale_found = true;
                 break;
                 
             // English
             case "en":
-                locale = 'en';
+                locale.push('en');
                 appropriate_browser_locale_found = true;
                 break;
             case "en-GB":
-                locale = 'en';
+                locale.push('en');
                 appropriate_browser_locale_found = true;
                 break;
             case "en-CA":
-                locale = 'en';
+                locale.push('en');
                 appropriate_browser_locale_found = true;
                 break;
             case "en-AU":
-                locale = 'en';
+                locale.push('en');
                 appropriate_browser_locale_found = true;
                 break;
             case "en-US":
-                locale = 'en';
+                locale.push('en');
                 appropriate_browser_locale_found = true;
                 break;
                 
             // Chinese (simplified)
             case "zh":
-                locale = 'zh';
+                locale.push('zh');
                 appropriate_browser_locale_found = true;
                 break;
             case "zh-Hans":
-                locale = 'zh';
+                locale.push('zh');
                 appropriate_browser_locale_found = true;
                 break;
             case "zh-CN":
-                locale = 'zh';
+                locale.push('zh');
                 appropriate_browser_locale_found = true;
                 break;
             case "zh-SG":
-                locale = 'zh';
+                locale.push('zh');
+                appropriate_browser_locale_found = true;
+                break;
+            
+            // toki pona
+            case "tok":
+                locale.push('tok-sp');
+                appropriate_browser_locale_found = true;
+                break;
+            case "tok-sp":
+                locale.push('tok-sp');
                 appropriate_browser_locale_found = true;
                 break;
         }
     }
+    
+    return locale;
+}
+
+function loadWebpage(filename, req, data) {
+    let webpage = fs.readFileSync(filename).toString();
+
+    // Insert data
+    for (let key of Object.keys(data)) {
+        webpage = webpage.replaceAll('<!--'+key+'-->', data[key]);
+    }
+
+    // Get correct locale
+    locale = getUserLocales(req);
 
     // Localise
     webpage = translate(webpage, locale);
@@ -259,13 +304,23 @@ function saltGen(len,characters) {
     return res;
 }
 
-function translate(text, locale) {
-    // Ge the locale file
-    let loc = loc_global[locale];
-    let loc_default = loc_global['es'];
+function translate_simple(key, langlist) {
+    for (let language of langlist) {
+        loc = loc_global[language];
+        val = loc[key];
+        if (val) {
+            return val;
+        } 
+    }
+    return '\\!!' + key + '!!\\';
+}
+
+function translate(text, langlist) {
+    const loc_default = Object.keys(loc_global['es']);
+    
     // Insert data
-    for (key in loc) {
-        text = text.replaceAll('\\!!' + key + '!!\\', loc[key] || loc_default[key]);
+    for (let key of loc_default) {
+        text = text.replaceAll('\\!!' + key + '!!\\', translate_simple(key, langlist));
     }
     // Return translated text
     return text;
@@ -342,7 +397,7 @@ app.get('/', (req, res) => {
         return;
     }
     if (users[liu]['2fa_key'] === undefined) {
-        res.send(translate('\\!!general.debes_configurar_a2f!!\\','es'));
+        res.send(translate('\\!!general.debes_configurar_a2f!!\\',getUserLocales(req)));
         return;
     }
     if (users[liu]['public_key'] === undefined) {
@@ -361,7 +416,7 @@ app.get('/configurarA2F', (req, res) => {
     users[getLoggedInUser(req)]['2fa_key'] = encryptAES(mfa_key, process.env.SERVER_AES_KEY);
     res.send(loadWebpage('2fa.html', req, {'CÓDIGO_A2F':mfa_key}));
     mfa_key = undefined;
-})
+});
 
 app.get('/login', (req, res) => {
     res.send(loadWebpage('login.html', req, {}));
@@ -374,19 +429,19 @@ app.post('/login', (req, res) => {
     let uid = getUserByUsername(uname);
     if (uid === undefined) {
         res.statusCode = 400;
-        res.send(translate('\\!!iniciar_sesión.usuario_no_existe!!\\', 'es'));
+        res.send(translate('\\!!iniciar_sesión.usuario_no_existe!!\\', getUserLocales(req)));
         return;
     }
     let salt = users[uid]['salt'];
     passwd = calculateSha256(passwd + salt);
     if (passwd !== users[uid]['password']) {
         res.statusCode = 400;
-        res.send(translate('\\!!iniciar_sesión.contraseña_incorrecta!!\\', 'es'));
+        res.send(translate('\\!!iniciar_sesión.contraseña_incorrecta!!\\', getUserLocales(req)));
         return;
     }
     if (!verifyOTP(mfa_code, decryptAES(users[uid]['2fa_key'], process.env.SERVER_AES_KEY))) {
         res.statusCode = 400;
-        res.send(translate('\\!!iniciar_sesión.código_a2f_incorrecto!!\\', 'es'));
+        res.send(translate('\\!!iniciar_sesión.código_a2f_incorrecto!!\\', getUserLocales(req)));
         return;
     }
     let sid = saltGen();
@@ -395,7 +450,7 @@ app.post('/login', (req, res) => {
         i++;
         if (i >= 100) {
             res.statusCode = 500;
-            res.send(translate('\\!!registro.err.sin_sid_disponible!!\\', 'es'));
+            res.send(translate('\\!!registro.err.sin_sid_disponible!!\\', getUserLocales(req)));
             return;
         }
         sid = saltGen();
@@ -415,25 +470,25 @@ app.post('/registrar', (req, res) => {
     let uname = req.body.uname;
     if (uname == undefined || uname.length == 0) {
         res.statusCode = 400;
-        res.send(translate('\\!!registro.err.nombre_vacío!!\\','es'));
+        res.send(translate('\\!!registro.err.nombre_vacío!!\\',getUserLocales(req)));
         return;
     }
     let passwd = req.body.passwd;
     if (passwd == undefined || passwd.length == 0) {
         res.statusCode = 400;
-        res.send(translate('\\!!registro.err.contraseña_vacía!!\\','es'));
+        res.send(translate('\\!!registro.err.contraseña_vacía!!\\',getUserLocales(req)));
         return;
     }
     let correo = req.body.correo;
     if (correo == undefined || correo.length == 0 || !correo.includes('@')) {
         res.statusCode = 400;
-        res.send(translate('\\!!registro.err.correo_inválido!!\\','es'));
+        res.send(translate('\\!!registro.err.correo_inválido!!\\',getUserLocales(req)));
         return;
     }
     let clavepublica = req.body.clavepublica;
     if (clavepublica == undefined || clavepublica.length == 0) {
         res.statusCode = 400;
-        res.send(translate('\\!!registro.err.clave_pública_vacía!!\\','es'));
+        res.send(translate('\\!!registro.err.clave_pública_vacía!!\\',getUserLocales(req)));
         return;
     }
     let display_name = req.body.display_name;
@@ -442,10 +497,10 @@ app.post('/registrar', (req, res) => {
     }
     if (getUserByUsername(uname)) {
         res.statusCode = 400;
-        res.send(translate('\\!!registro.err.usuario_ya_existe!!\\', 'es'));
+        res.send(translate('\\!!registro.err.usuario_ya_existe!!\\', getUserLocales(req)));
         return;
     }
-    let user = generateUser(uname, passwd, correo, clavepublica, 'es',
+    let user = generateUser(uname, passwd, correo, clavepublica, getUserLocales(req),
         display_name);
     users.push(user);
     let sid = saltGen();
@@ -454,7 +509,7 @@ app.post('/registrar', (req, res) => {
         i++;
         if (i >= 100) {
             res.statusCode = 500;
-            res.send(translate('\\!!registro.err.sin_sid_disponible!!\\', 'es'));
+            res.send(translate('\\!!registro.err.sin_sid_disponible!!\\', getUserLocales(req)));
             return;
         }
         sid = saltGen();
@@ -470,8 +525,10 @@ app.post('/registrar', (req, res) => {
 app.get('/configurarCuenta', (req, res) => {
     let liu = getLoggedInUser(req);
     if (liu === undefined) { res.redirect('/login'); }
-    res.send(loadWebpage('configurarCuenta.html', req, {}));
-})
+    res.send(loadWebpage('configurarCuenta.html', req, {
+        'UID': liu
+    }));
+});
 
 app.post('/subscribe', (req, res) => {
     let subscripcion = req.body.subscripcion;
@@ -521,28 +578,109 @@ app.get('/recibirClavePrivada', (req, res) => {
     res.send(loadWebpage('recibirClavePrivada.html', req, {}));
 });
 
+app.post('/establecerFotoDePerfil', upload.single('pfp'), async (req, res) => {
+    try {
+        let uid = getLoggedInUser(req);
+        if (uid === undefined) {
+            res.redirect('/login');
+            return;
+        }
+        
+        if (!req.file) {
+            res.status(400).json({
+                'success': false,
+                'error_localised': translate('\\!!establecer_fdp.sin_archivo!!\\', getUserLocales(req))
+            });
+            return;
+        }
+        
+        let outputPath = path.join(pfp_dir, `usuario_${uid}.webp`);
+        let tempPath = path.join(pfp_dir, `usuario_${uid}_tmp.webp`);
+        
+        await sharp(req.file.buffer)
+            .rotate()
+            .resize({
+                width: 512,
+                height: 512,
+                fit: 'inside',
+                withoutEnlargement: true
+            })
+            .webp({
+                lossless: true
+            })
+            .toFile(tempPath);
+        fs.renameSync(tempPath, outputPath);
+        
+        users[uid]['profile-picture'] = outputPath.toString();
+        
+        res.status(200).redirect('/configurarCuenta');
+    } catch (err) {
+        console.error(err);
+        res.status(400).json({ 'success': false });
+    }
+});
+
+app.delete('/desestablecerFotoDePerfil', (req, res) => {
+    let uid = getLoggedInUser(req);
+    if (uid === undefined) {
+        res.redirect('/login');
+        return;
+    }
+    
+    if (!/[0-9]+/.test(uid)) {
+        res.status(400).send(translate('\\!!desestablecer_fdp.uid_inválido!!\\', getUserLocales(req)));
+        return;
+    }
+    
+    let filePath = path.join(pfp_dir, `usuario_${uid}.webp`);
+    
+    if (fs.existsSync(filePath)) {
+        fs.rmSync(filePath);
+    }
+    
+    users[uid]['profile-picture'] = undefined;
+    
+    res.status(204).end();
+});
+
+available_languages = ['es', 'en', 'zh', 'zh-Hans', 'tok-sp'];
 app.get('/setlang/es', (req, res) => {
-    req.session.lang = 'es';
+    req.session.lang = ['es'];
     res.redirect('/');
 });
 
 app.get('/setlang/en', (req, res) => {
-    req.session.lang = 'en';
+    req.session.lang = ['en'];
     res.redirect('/');
 });
 
 app.get('/setlang/zh', (req, res) => {
-    req.session.lang = 'zh';
+    req.session.lang = ['zh'];
     res.redirect('/');
 });
 
 app.get('/setlang/zh-Hans', (req, res) => {
-    req.session.lang = 'zh-Hans';
+    req.session.lang = ['zh-Hans'];
+    res.redirect('/');
+});
+
+app.get('/setlang/tok-sp', (req, res) => {
+    req.session.lang = ['tok-sp'];
     res.redirect('/');
 });
 
 app.get('/setlang/clear', (req, res) => {
-    req.session.lang = undefined;
+    req.session.lang = [];
+    res.redirect('/');
+});
+
+app.get('/setlang/:languages', (req, res) => {
+    let languages = [];
+    for (let language of req.params.languages.split(',')) {
+        if (language in available_languages) {
+            languages.push(language);
+        }
+    }
     res.redirect('/');
 });
 
@@ -551,7 +689,7 @@ app.get('/app/getUIDByUsername', (req, res) => {
     let uid = getUserByUsername(username);
     if (uid === undefined) {
         res.statusCode = 400;
-        res.send(translate('\\!!app.usuario_no_existe!!\\', 'es'));
+        res.send(translate('\\!!app.usuario_no_existe!!\\', getUserLocales(req)));
         return;
     }
     res.statusCode = 200;
@@ -564,13 +702,13 @@ app.get('/app/getUserPublicKey', (req, res) => {
         uid = parseInt(uid);
         if (uid === NaN) {
             res.statusCode = 400;
-            res.send(translate('\\!!app.uid_no_válido!!\\'));
+            res.send(translate('\\!!app.uid_no_válido!!\\', getUserLocales(req)));
             return;
         }
     }
     if (users[uid] === undefined) {
         res.statusCode = 400;
-        res.send(translate('\\!!app.usuario_no_existe!!\\', 'es'));
+        res.send(translate('\\!!app.usuario_no_existe!!\\', getUserLocales(req)));
         return;
     }
     let key = users[uid]['public_key'];
@@ -643,7 +781,7 @@ app.post('/app/comenzarConversacion/md', (req, res) => {
     
     if (nombreConver.includes('"')) {
         res.statusCode = 400;
-        res.send(translate('\\!!app.doble_comillas_inválido_en_nombre_de_conver!!\\'));
+        res.send(translate('\\!!app.doble_comillas_inválido_en_nombre_de_conver!!\\', getUserLocales(req)));
         return;
     }
     
@@ -654,7 +792,7 @@ app.post('/app/comenzarConversacion/md', (req, res) => {
         i++
         if (i > 500) {
             res.statusCode = 500;
-            res.send(translate('\\!!app.no_se_encontró_uuid_abierto!!\\', 'es'));
+            res.send(translate('\\!!app.no_se_encontró_uuid_abierto!!\\', getUserLocales(req)));
             return;
         }
         uuid = crypto.randomUUID();
@@ -693,7 +831,8 @@ app.get('/app/fotoDePerfil', (req, res) => {
         return;
     }
     if (users[uid]['profile-picture'] !== undefined) {
-        res.send(users[uid]['profile-picture']);
+        //res.set('Content-Type', users[uid]['profile-picture']['type']); // images/png images/svg images/jpeg
+        res.sendFile(users[uid]['profile-picture']);
         return;
     }
     res.sendFile(__dirname + '/assets/imgs/FDP_predeterminado.svg');
