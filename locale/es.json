@@ -7,6 +7,10 @@
     "iniciar_sesión.contraseña": "Contraseña: ",
     "iniciar_sesión.código_a2f": "Autenticación en dos factores: ",
     "iniciar_sesión.iniciar_sesión": "Iniciar Sesión",
+    "iniciar_sesión.usar_sso": "Iniciar Sesión Con…",
+    "iniciar_sesión.usar_sso.advertencia": "Nota: estas opciones usan servicios de terceros con sus propias políticas (incluyendo políticas de privacidad), y su seguridad no podemos garantizar",
+    "iniciar_sesión.usar_sso.github": "Iniciar sesión con GitHub",
+    "iniciar_sesión.sso.github.deshabilitado_en_servidor": "Autenticación con GitHub no está habilitado en esta instancia de Mensajeador",
     "registrarse.título": "Registrarse para Mensajeador",
     "registrarse.nombre_de_usuario": "Nombre de usuario: ",
     "registrarse.contraseña": "Contraseña: ",
@@ -42,6 +46,9 @@
     "configurar_cuenta.foto_de_perfil": "Foto de Perfil",
     "configurar_cuenta.establecer_foto_de_perfil": "Establecer Como Foto de Perfil",
     "configurar_cuenta.desestablecer_foto_de_perfil": "Desestablecer Foto de Perfil",
+    "configurar_cuenta.usar_sso": "Habilitar Iniciar Sesión Con…",
+    "configurar_cuenta.usar_sso.advertencia": "Nota: estas opciones usan servicios de terceros con sus propias políticas (incluyendo políticas de privacidad), y su seguridad no podemos garantizar",
+    "configurar_cuenta.usar_sso.github": "GitHub",
     "general.debes_configurar_a2f": "Debes <a href=\"./configurarA2F\">configurar A2F</a> para usar la cuenta",
     "app.usuario_no_existe": "El usuario que se ha solicitado no existe",
     "app.uid_no_válido": "El UID ingresado no es válido",
@@ -50,5 +57,6 @@
     "recibir_clave_privada.título": "Recibir y Guardar Clave Privada | Mensajeador",
     "recibir_clave_privada.comenzar": "Recibir y guardar clave privada de otro dispositivo (primero debes iniciar el proceso de enviar)",
     "enviar_clave_privada.título": "Enviar Clave Privada | Mensajeador",
-    "enviar_clave_privada.comenzar": "Enviar de forma segura su clave privada a otro dispositivo"
+    "enviar_clave_privada.comenzar": "Enviar de forma segura su clave privada a otro dispositivo",
+    "establecer_fdp.sin_archivo": "No se ha especificado el archivo de la foto de perfil"
 }

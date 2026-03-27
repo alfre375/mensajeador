@@ -7,6 +7,10 @@
     "iniciar_sesión.contraseña": "Password: ",
     "iniciar_sesión.código_a2f": "2-factor authentication: ",
     "iniciar_sesión.iniciar_sesión": "Log in",
+    "iniciar_sesión.usar_sso": "Log In With…",
+    "iniciar_sesión.usar_sso.advertencia": "",
+    "iniciar_sesión.usar_sso.github": "Sign in with GitHub",
+    "iniciar_sesión.sso.github.deshabilitado_en_servidor": "GitHub SSO is not enabled in this instance of Mensajeador",
     "registrarse.título": "Register for Mensajeador",
     "registrarse.nombre_de_usuario": "Username: ",
     "registrarse.contraseña": "Password: ",
@@ -42,6 +46,9 @@
     "configurar_cuenta.foto_de_perfil": "Profile Picture",
     "configurar_cuenta.establecer_foto_de_perfil": "Set As Profile Picture",
     "configurar_cuenta.desestablecer_foto_de_perfil": "Reset Profile Picture",
+    "configurar_cuenta.usar_sso": "",
+    "configurar_cuenta.usar_sso.advertencia": "",
+    "configurar_cuenta.usar_sso.github": "",
     "general.debes_configurar_a2f": "You must <a href=\"./configurarA2F\">configure 2FA</a> to use the account",
     "app.usuario_no_existe": "User does not exist",
     "app.uid_no_válido": "Invalid UID entered",
@@ -50,5 +57,6 @@
     "recibir_clave_privada.título": "Recieve and Save Private Key | Mensajeador",
     "recibir_clave_privada.comenzar": "Receive and save private key from another device (you must first start the sending process)",
     "enviar_clave_privada.título": "Send Private Key | Mensajeador",
-    "enviar_clave_privada.comenzar": "Securely send your private key to another device"
+    "enviar_clave_privada.comenzar": "Securely send your private key to another device",
+    "establecer_fdp.sin_archivo": "Profile picture file not specified"
 }

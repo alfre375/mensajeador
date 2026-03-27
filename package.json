@@ -23,6 +23,7 @@
     "fs": "^0.0.1-security",
     "https": "^1.0.0",
     "multer": "^2.0.2",
+    "openid-client": "^6.8.2",
     "qrcode": "^1.5.4",
     "sharp": "^0.34.5",
     "socket.io": "^4.8.1",

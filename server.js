@@ -25,6 +25,16 @@ const server = https.createServer(httpsOptions, app);
 const { Server } = require("socket.io");
 const io = new Server(server);
 
+const github_oauth_enabled = process.env.SSO_GITHUB_CLIENT_ID && process.env.SSO_GITHUB_CLIENT_SECRET;
+
+const githubAuth = github_oauth_enabled
+    ? {
+        clientId: process.env.SSO_GITHUB_CLIENT_ID,
+        clientSecret: process.env.SSO_GITHUB_CLIENT_SECRET,
+        redirectUri: process.env.FULL_DOMAIN + '/oauth/github/callback',
+    }
+    : null;
+
 // Carga los usuarios
 var users = [
     {
@@ -352,6 +362,16 @@ function getUserByUsername(uname) {
     }
 }
 
+function getUserByGithubId(github_id) {
+    for (user in users) {
+        if (users[user]['oauth']) {
+            if (users[user]['oauth']['github_id'] == github_id) {
+                return user;
+            }
+        }
+    }
+}
+
 function gen2FAKey() {
     // Generate a secret key
     const secretKey = speakeasy.generateSecret({ length: 20 });
@@ -419,7 +439,10 @@ app.get('/configurarA2F', (req, res) => {
 });
 
 app.get('/login', (req, res) => {
-    res.send(loadWebpage('login.html', req, {}));
+    res.send(loadWebpage('login.html', req, {
+        'ALL_SSO_DISABLED': (github_oauth_enabled) ? '' : 'hidden',
+        'GITHUB_SSO_DISABLED': github_oauth_enabled ? '' : 'hidden'
+    }));
 });
 
 app.post('/login', (req, res) => {
@@ -460,6 +483,129 @@ app.post('/login', (req, res) => {
     sesiones[sid] = {'user':uid,'expiry':twoWeeksTime.getTime()};
     res.statusCode = 200;
     res.redirect('/');
+});
+
+app.get('/oauth/github', (req, res) => {
+    if (!github_oauth_enabled) {
+        res.status(400).send(translate('\\!!iniciar_sesión.sso.github.deshabilitado_en_servidor!!\\', getUserLocales(req)));
+        return;
+    }
+    const state = crypto.randomBytes(16).toString('hex');
+    req.session.state = state;
+    req.session.oauth_intent = 'login';
+    
+    const url = new URL('https://github.com/login/oauth/authorize');
+    url.searchParams.set('client_id', githubAuth.clientId);
+    url.searchParams.set('redirect_uri', githubAuth.redirectUri);
+    url.searchParams.set('state', state);
+    url.searchParams.set('scope', '');
+
+    return res.redirect(url.toString());
+});
+
+app.get('/oauth/github/configure', (req, res) => {
+    if (!github_oauth_enabled) {
+        res.status(400).send(translate('\\!!iniciar_sesión.sso.github.deshabilitado_en_servidor!!\\', getUserLocales(req)));
+        return;
+    }
+    
+    if (getLoggedInUser(req) === undefined) {
+        res.status(200).redirect('/');
+        return;
+    }
+    
+    const state = crypto.randomBytes(16).toString('hex');
+    req.session.state = state;
+    req.session.oauth_intent = 'configure';
+    
+    const url = new URL('https://github.com/login/oauth/authorize');
+    url.searchParams.set('client_id', githubAuth.clientId);
+    url.searchParams.set('redirect_uri', githubAuth.redirectUri);
+    url.searchParams.set('state', state);
+    url.searchParams.set('scope', '');
+
+    return res.redirect(url.toString());
+});
+
+app.get('/oauth/github/callback', async (req, res) => {
+    if (!github_oauth_enabled) {
+        res.status(400).send(translate('\\!!iniciar_sesión.sso.github.deshabilitado_en_servidor!!\\', getUserLocales(req)));
+        return;
+    }
+    try {
+        // CSRF protection
+        if (req.query.state !== req.session.state) {
+            return res.status(400).send('Estado inválido');
+        }
+        req.session.state = undefined;
+        
+        const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                client_id: githubAuth.clientId,
+                client_secret: githubAuth.clientSecret,
+                code: req.query.code,
+                redirect_uri: githubAuth.redirectUri,
+                state: req.query.state,
+            }),
+        });
+
+        const tokenData = await tokenRes.json();
+        if (!tokenData.access_token) {
+            return res.status(401).send('No se pudo obtener el token');
+        }
+
+        const userInfo = await fetch('https://api.github.com/user', {
+            headers: {
+                Authorization: `Bearer ${tokenData.access_token}`,
+                Accept: 'application/vnd.github+json',
+            },
+        }).then(r => r.json());
+
+        let userGithubId = userInfo.id;
+        
+        let oauth_intent = req.session.oauth_intent;
+        req.session.oauth_intent = undefined;
+        if (oauth_intent === 'login') {
+            // Identify the user
+            let uid = getUserByGithubId(userGithubId);
+            // Log the user in
+            let sid = saltGen();
+            let i = 0;
+            while (sid in sesiones) {
+                i++;
+                if (i >= 100) {
+                    res.statusCode = 500;
+                    res.send(translate('\\!!registro.err.sin_sid_disponible!!\\', getUserLocales(req)));
+                    return;
+                }
+                sid = saltGen();
+            }
+            req.session.sessionId = sid;
+            let twoWeeksTime = new Date(new Date().getTime() + twoWeeks);
+            sesiones[sid] = {'user':uid,'expiry':twoWeeksTime.getTime()};
+            res.statusCode = 200;
+            res.redirect('/');
+        } else if (oauth_intent === 'configure') {
+            let liu = getLoggedInUser(req);
+            if (liu === undefined) res.redirect('/login');
+            if (users[liu]['oauth']) {
+                users[liu]['oauth']['github_id'] = userGithubId;
+            } else {
+                users[liu]['oauth'] = {
+                    'github_id': userGithubId
+                };
+            }
+            res.status(200).redirect('/configurarCuenta');
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Ha fallado la autenticación con GitHub');
+    }
 });
 
 app.get('/registrar', (req, res) => {
@@ -522,11 +668,19 @@ app.post('/registrar', (req, res) => {
     passwd = undefined;
 });
 
+app.get('/logout', (req, res) => {
+    sesiones[req.session.sessionId] = undefined;
+    req.session.sessionId = undefined;
+    res.status(200).redirect('/');
+})
+
 app.get('/configurarCuenta', (req, res) => {
     let liu = getLoggedInUser(req);
-    if (liu === undefined) { res.redirect('/login'); }
+    if (liu === undefined) { res.redirect('/login'); return; }
     res.send(loadWebpage('configurarCuenta.html', req, {
-        'UID': liu
+        'UID': liu,
+        // 'ALL_SSO_DISABLED': (github_oauth_enabled) ? '' : 'hidden',
+        'GITHUB_SSO_DISABLED': github_oauth_enabled ? '' : 'hidden',
     }));
 });
 
@@ -927,6 +1081,10 @@ app.get('/assets/fonts/linjalipamanka-normal.woff', (req, res) => {
     res.sendFile(__dirname + '/assets/fonts/linjalipamanka-normal.woff');
 });
 
+app.get('/assets/imgs/GitHub_Invertocat_Black.svg', (req, res) => {
+    res.sendFile(__dirname + '/assets/imgs/GitHub_Invertocat_Black.svg');
+});
+
 app.get("/qrgen/:contents", async (req, res) => {
     try {
         const contents = req.params.contents;
@@ -1005,7 +1163,7 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         //console.log('user disconnected');
         let liu = getLoggedInUser(socket.request);
-        socketIds[liu].splice(socketIds[liu].indexOf(socket.id), 1)
+        if (liu !== undefined) socketIds[liu].splice(socketIds[liu].indexOf(socket.id), 1);
     });
     
     // Sistema de mensajes

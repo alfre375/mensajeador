@@ -18,5 +18,19 @@
         <input type="text" name="mfa" id="mfa" maxlength="6"><br>
         <button type="submit">\!!iniciar_sesión.iniciar_sesión!!\</button>
     </form>
+    <div <!--ALL_SSO_DISABLED-->>
+        <h3>\!!iniciar_sesión.usar_sso!!\</h3>
+        <p style="color: darkred;">\!!iniciar_sesión.usar_sso.advertencia!!\</p>
+        <button class="gsi-material-button" <!--GITHUB_SSO_DISABLED--> onclick="window.location.href = '/oauth/github'">
+            <div class="gsi-material-button-state"></div>
+            <div class="gsi-material-button-content-wrapper">
+                <div class="gsi-material-button-icon">
+                    <img src="./assets/imgs/GitHub_Invertocat_Black.svg" width="200px">
+                </div>
+                <span class="gsi-material-button-contents">\!!iniciar_sesión.usar_sso.github!!\</span>
+                <span style="display: none;">\!!iniciar_sesión.usar_sso.github!!\</span>
+            </div>
+        </button>
+    </div>
 </body>
 </html>
