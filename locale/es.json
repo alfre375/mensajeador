@@ -11,6 +11,7 @@
     "iniciar_sesión.usar_sso.advertencia": "Nota: estas opciones usan servicios de terceros con sus propias políticas (incluyendo políticas de privacidad), y su seguridad no podemos garantizar",
     "iniciar_sesión.usar_sso.github": "Iniciar sesión con GitHub",
     "iniciar_sesión.sso.github.deshabilitado_en_servidor": "Autenticación con GitHub no está habilitado en esta instancia de Mensajeador",
+    "iniciar_sesión.credenciales_inválidas": "Las credenciales de inicio de sesión son inválidas",
     "registrarse.título": "Registrarse para Mensajeador",
     "registrarse.nombre_de_usuario": "Nombre de usuario: ",
     "registrarse.contraseña": "Contraseña: ",

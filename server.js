@@ -15,6 +15,7 @@ const multer = require('multer');
 const path = require('path');
 const sharp = require('sharp');
 const twoWeeks = 1000 * 60 * 60 * 24 * 14;
+const thirtyDays = 1000 * 60 * 60 * 24 * 30;
 
 const httpsOptions = {
     key: fs.readFileSync('./ssl/privatekey.pem'),
@@ -285,13 +286,22 @@ function calculateSha256(inputString) {
 
 function getLoggedInUser(req) {
     let session = req.session.sessionId;
+    let sourcetype = (req.body ? req.body.sourcetype : req.query.sourcetype) || 'sourcetype.web';
     if (session && sesiones[session]) {
         if (sesiones[session]['expiry'] < new Date().getTime()) {
             delete sesiones[session];
             return undefined;
         }
         let user = sesiones[session]['user'];
-        return (user != null) ? user : undefined;
+        if (user !== null && user !== undefined) {
+            if (sesiones[session]['sourcetype'] !== sourcetype) {
+                sesiones[session] = undefined; // log out the sourcetype (most likely stolen token)
+                user = undefined;
+            }
+            return user
+        } else {
+            return undefined
+        }
     } else {
         return undefined;
     }
@@ -446,28 +456,81 @@ app.get('/login', (req, res) => {
 });
 
 app.post('/login', (req, res) => {
+    let sourcetype = req.body.sourcetype || 'sourcetype.web';
+    const acceptable_sourcetypes_at_endpoint = [
+        'sourcetype.web',
+        'sourcetype.api',
+        'sourcetype.app'
+    ]
+    if (!(sourcetype in acceptable_sourcetypes_at_endpoint)) {
+        res.json({
+            'success': false,
+            'error': 'INVALID_SOURCETYPE',
+            'request_completion': 0x00, // no significant portion was completed
+            'error_localised': translate('\\!!iniciar_sesión.sourcetype_inválido!!\\', getUserLocales(req)),
+            'fault': 'client',
+            'fault_fix': 'Set sourcetype to a valid option (or none if visiting from the web)',
+            'acceptable_sourcetypes_at_endpoint': acceptable_sourcetypes_at_endpoint,
+            'sourcetype': sourcetype
+        });
+        return;
+    }
+    
     let uname = req.body.uname;
     let passwd = req.body.password;
     let mfa_code = req.body.mfa;
     let uid = getUserByUsername(uname);
     if (uid === undefined) {
-        res.statusCode = 400;
-        res.send(translate('\\!!iniciar_sesión.usuario_no_existe!!\\', getUserLocales(req)));
+        if (sourcetype === 'web') {
+            res.status(401).send(translate('\\!!iniciar_sesión.credenciales_inválidas!!\\', getUserLocales(req)));
+        } else {
+            res.status(401).json({
+                'success': false,
+                'error': 'INCORRECT_LOGIN_CREDENTIALS',
+                'request_completion': 0x00,
+                'error_localised': translate('\\!!iniciar_sesión.credenciales_inválidas!!\\', getUserLocales(req)),
+                'fault': 'client',
+                'fault_fix': 'Check the username, password, and TOTP fields and try again with revised credentials',
+                'sourcetype': sourcetype
+            });
+        }        
         return;
     }
     let salt = users[uid]['salt'];
     passwd = calculateSha256(passwd + salt);
     if (passwd !== users[uid]['password']) {
-        res.statusCode = 400;
-        res.send(translate('\\!!iniciar_sesión.contraseña_incorrecta!!\\', getUserLocales(req)));
+        if (sourcetype === 'web') {
+            res.status(401).send(translate('\\!!iniciar_sesión.credenciales_inválidas!!\\', getUserLocales(req)));
+        } else {
+            res.status(401).json({
+                'success': false,
+                'error': 'INCORRECT_LOGIN_CREDENTIALS',
+                'request_completion': 0x00,
+                'error_localised': translate('\\!!iniciar_sesión.credenciales_inválidas!!\\', getUserLocales(req)),
+                'fault': 'client',
+                'fault_fix': 'Check the username, password, and TOTP fields and try again with revised credentials',
+                'sourcetype': sourcetype
+            });
+        }
         return;
     }
     if (!verifyOTP(mfa_code, decryptAES(users[uid]['2fa_key'], process.env.SERVER_AES_KEY))) {
-        res.statusCode = 400;
-        res.send(translate('\\!!iniciar_sesión.código_a2f_incorrecto!!\\', getUserLocales(req)));
+        if (sourcetype === 'web') {
+            res.status(401).send(translate('\\!!iniciar_sesión.credenciales_inválidas!!\\', getUserLocales(req)));
+        } else {
+            res.status(401).json({
+                'success': false,
+                'error': 'INCORRECT_LOGIN_CREDENTIALS',
+                'request_completion': 0x00,
+                'error_localised': translate('\\!!iniciar_sesión.credenciales_inválidas!!\\', getUserLocales(req)),
+                'fault': 'client',
+                'fault_fix': 'Check the username, password, and TOTP fields and try again with revised credentials',
+                'sourcetype': sourcetype
+            });
+        }
         return;
     }
-    let sid = saltGen();
+    let sid = saltGen(sourcetype === 'sourcetype.web' ? 16 : 64);
     let i = 0;
     while (sid in sesiones) {
         i++;
@@ -476,13 +539,22 @@ app.post('/login', (req, res) => {
             res.send(translate('\\!!registro.err.sin_sid_disponible!!\\', getUserLocales(req)));
             return;
         }
-        sid = saltGen();
+        sid = saltGen(sourcetype === 'sourcetype.web' ? 16 : 64);
     }
-    req.session.sessionId = sid;
-    let twoWeeksTime = new Date(new Date().getTime() + twoWeeks);
-    sesiones[sid] = {'user':uid,'expiry':twoWeeksTime.getTime()};
+    let expiryTime = new Date().getTime() + (sourcetype === 'sourcetype.web' ? twoWeeks : thirtyDays);
+    sesiones[sid] = {'user':uid,'expiry':expiryTime,'sourcetype': sourcetype};
     res.statusCode = 200;
-    res.redirect('/');
+    if (sourcetype === 'sourcetype.web') {
+        req.session.sessionId = sid;
+        res.redirect('/');
+    } else {
+        res.json({
+            'success': 'true',
+            'sourcetype': sourcetype,
+            'token': sid,
+            'expiry': thirtyDays,
+        });
+    }
 });
 
 app.get('/oauth/github', (req, res) => {
@@ -1141,6 +1213,11 @@ app.get("/otpqrgen/:label", async (req, res) => {
 app.get('/admin/refreshLangFiles', (req, res) => {
     refreshLangFiles();
     res.redirect('/');
+});
+
+// Endpoints de uso general
+app.get('/usos_del_servidor/mensajeador', (req, res) => {
+    res.status(200).send(Buffer.from([0xF3, 0xD4]));
 });
 
 // Socket.io
