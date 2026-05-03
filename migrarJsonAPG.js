@@ -117,7 +117,7 @@ async function main() {
         INSERT INTO conversations (
             conver_id, conver_name, conver_type, crypt_type, settings, creation_date
         )
-        VALUES ($1,$2,$3,$4,$5)
+        VALUES ($1,$2,$3,$4,$5,$6)
         `, [
             oldId,
             conv["conversation-name"],
