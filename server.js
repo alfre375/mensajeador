@@ -14,6 +14,7 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const sharp = require('sharp');
+const { Client } = require('pg');
 const twoWeeks = 1000 * 60 * 60 * 24 * 14;
 const thirtyDays = 1000 * 60 * 60 * 24 * 30;
 
@@ -36,53 +37,16 @@ const githubAuth = github_oauth_enabled
     }
     : null;
 
-// Carga los usuarios
-var users = [
-    {
-        "uname": "pineapple",
-        "password": "passwd123", // Hashed and salted
-        "salt": "afc3dFxCRNdisPIL", // Random 16 digit salt
-        "email": "pineapple_cherry@mymailservice.pn",
-        "public_key": "abc", // Each user has a public key
-        "private_key": "abc", // Users can (optionally) store the
-        // password-protected private keys here
-        "2fa_key": "abc", // Encrypt with server key
-        "lang": "es",
-        "display_name": "Mx. Pinapple",
-        "conversations": []
-    }
-];
-users = fs.existsSync('./data/users.json') ?
-    JSON.parse(fs.readFileSync('./data/users.json').toString()) : [];
-var sesiones = fs.existsSync('./data/sesiones.json') ?
-    JSON.parse(fs.readFileSync('./data/sesiones.json').toString()) : {};
+// Carga postgres
+const client = new Client({
+  user: process.env.POSTGRES_USER,
+  host: process.env.POSTGRES_HOST || 'localhost',
+  database: process.env.POSTGRES_DB || 'mensajeador_db',
+  password: process.env.POSTGRES_PASSWD,
+  port: process.env.POSTGRES_PORT || 5432,
+});
 
-// Carga las conversaciónes
-var converes = {
-    'a8d3d493-434f-448c-bf88-2d69b9c211fa': {
-        'conversation-type': 0, // Usuario a usuario, estilo mensaje directo
-        'conversation-name': 'Clase de Mx. Pineapple',
-        'creation-date': new Date().getTime(),
-        'conversation-users': {
-            0: 'abcabcabc', // Key: uid del usuario; val: llave de conversación encriptada con llave pública del usuario
-            1: 'cbacba'
-        },
-        'conversation-settings': {
-            'font': undefined, // cuando es undefined: usa fuentes predeterminados
-            'require-consent-to-add': false, // requiere que todos los usuarios acepten para agregar más usuarios
-        },
-        'messages': [
-            { // En realidad, cada mensaje está encriptado
-                'sent-by': 0,
-                'type': 0, // 0 es un mensaje de texto estándard
-                'content': 'This message was sent today',
-                'sent-at': new Date().getTime()
-            }
-        ]
-    }
-}
-converes = fs.existsSync('./data/conversaciones.json') ?
-    JSON.parse(fs.readFileSync('./data/conversaciones.json').toString()) : {};
+client.connect();
 
 // Carga los archivos de localización
 let loc_global = {};
@@ -113,27 +77,41 @@ webpush.setVapidDetails(
     publicVapidKey,
     privateVapidKey
 );
-var subscripciones = fs.existsSync('./data/subscripciones.json') ?
-    JSON.parse(fs.readFileSync('./data/subscripciones.json').toString()) : {};
 
-function agregarSubscripcion(req, subscripcion) {
-    let liu = getLoggedInUser(req);
+/**
+ * Agrega una subscripción de webpush
+*/
+async function agregarSubscripcion(req, subscripcion) {
+    let liu = await getLoggedInUser(req);
     if (liu === undefined) { return false; }
-    if (!Object.keys(subscripciones).includes(liu)) {
-        subscripciones[liu] = [];
-    }
-    subscripciones[liu].push(subscripcion);
+    
+    await client.query(`
+    INSERT INTO web_notification_subscriptions
+    (user_id, endpoint, expiration_time, p256dh, auth)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (user_id, endpoint) DO NOTHING
+    `, [
+        liu,
+        subscripcion.endpoint,
+        subscripcion.expirationTime,
+        subscripcion.keys.p256dh,
+        subscripcion.keys.auth
+    ]);
     return true;
 }
-function quitarSubscripcion(subscripcion) {
-    for (user of subscripciones) {
-        for (subscripcion_subses in subscripciones[user]) {
-            if (subscripciones[user][subscripcion_subses] == subscripcion) {
-                subscripciones[user][subscripcion_subses] = undefined;
-            }
-        }
-    }
+
+/**
+ * Quita una subscripción de webpush
+ */
+async function quitarSubscripcion(subscripcion) {
+    await client.query(
+        `DELETE FROM web_notification_subscriptions WHERE endpoint = $1`,
+        [
+            subscripcion.endpoint
+        ]
+    );
 }
+
 async function enviarNotificacion(subscripcion, payload) {
     if (typeof payload !== 'string') {
         payload = JSON.stringify(payload);
@@ -143,10 +121,10 @@ async function enviarNotificacion(subscripcion, payload) {
         return { 'success': true };
     } catch (err) {
         if (err.statusCode === 404 || err.statusCode === 410) {
-            quitarSubscripcion(subscripcion);
+            await quitarSubscripcion(subscripcion);
             return { 'success': false, 'quitado': true }
         }
-        return { 'success': false, 'err': err }
+        return { 'success': false, 'quitado': false, 'err': err }
     }
 }
 
@@ -284,24 +262,52 @@ function calculateSha256(inputString) {
     return hash.digest('hex'); // Compute the hash digest and encode it in hexadecimal format
 }
 
-function getLoggedInUser(req) {
+/**
+ * 
+ * @param {express.Request} req The request from expressjs or socket.io
+ * @param {string} sigreq The string to check against for the API key verification (not including timestamp nor the // immediately following the timestamp). Leave blank if the endpoint is not meant for use by API.
+ * @returns If the user is logged in and authentication is successful, their local userid is returned; if not, undefined is returned
+ */
+async function getLoggedInUser(req, sigreq) {
     let session = req.session.sessionId;
-    let sourcetype = (req.body ? req.body.sourcetype : req.query.sourcetype) || 'sourcetype.web';
-    if (session && sesiones[session]) {
-        if (sesiones[session]['expiry'] < new Date().getTime()) {
-            delete sesiones[session];
+    let sourcetype = req.body?.sourcetype || req.query?.sourcetype || 'sourcetype.web';
+    if (sourcetype === 'sourcetype.web' && session) {
+        const result = await client.query(
+            `SELECT user_id, expiry FROM sessions_web WHERE id = $1`,
+            [req.session.sessionId]
+        );
+
+        const session = result.rows[0];
+
+        if (!session) return undefined;
+        
+        if (session.expiry < Date.now()) {
+            await client.query(`DELETE FROM sessions_web WHERE id = $1`, [sessionId]);
             return undefined;
         }
-        let user = sesiones[session]['user'];
-        if (user !== null && user !== undefined) {
-            if (sesiones[session]['sourcetype'] !== sourcetype) {
-                sesiones[session] = undefined; // log out the sourcetype (most likely stolen token)
-                user = undefined;
-            }
-            return user
-        } else {
-            return undefined
-        }
+        
+        return session.user_id;
+    } else if (sourcetype == 'sourcetype.api') {
+        const pubkey = req.header('X-Ident');
+        const timestamp = req.header('X-Timestamp');
+        const signature = req.header('X-Signature');
+
+        if (!pubkey || !timestamp || !signature) return undefined;
+
+        if (parseInt(timestamp) > Date.now() + 5000) return undefined;
+
+        const res = await client.query(`
+            SELECT user_id
+            FROM llaves_api
+            WHERE pub_rsa_pss_key = $1
+        `, [pubkey]);
+
+        const user_id = res.rows[0]?.user_id;
+        if (!user_id) return undefined;
+
+        if (!verificarFirma(pubkey, timestamp + '//' + sigreq)) return undefined;
+
+        return user_id;
     } else {
         return undefined;
     }
@@ -364,22 +370,24 @@ function generateUser(uname, passwd, email, pubkey, lang, display_name) {
     }
 }
 
-function getUserByUsername(uname) {
-    for (user in users) {
-        if (users[user]['uname'] === uname) {
-            return user;
-        }
-    }
+async function getUserByUsername(uname) {
+    const res = await client.query(`
+        SELECT user_id
+        FROM users
+        WHERE uname = $1
+    `, [uname]);
+
+    return res.rows[0]?.user_id;
 }
 
-function getUserByGithubId(github_id) {
-    for (user in users) {
-        if (users[user]['oauth']) {
-            if (users[user]['oauth']['github_id'] == github_id) {
-                return user;
-            }
-        }
-    }
+async function getUserByGithubId(github_id) {
+    const res = await client.query(`
+    SELECT user_id
+    FROM users
+    WHERE oauth->>'github_id' = $1
+    `, [github_id]);
+
+    return res.rows[0]?.user_id;
 }
 
 function gen2FAKey() {
@@ -407,6 +415,46 @@ function decryptAES(encryptedData, key) {
     return bytes.toString(CryptoJS.enc.Utf8);
 }
 
+function verificarFirma(publicKeyPem, payload, signatureBase64) {
+    return crypto.verify(
+        'sha256',
+        Buffer.from(payload),
+        {
+            key: publicKeyPem,
+            padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+            saltLength: crypto.constants.RSA_PSS_SALTLEN_MAX_SIGN
+        },
+        Buffer.from(signatureBase64, 'base64')
+    );
+}
+
+function firmar(privatePem, payload) {
+    const signature = crypto.sign(
+        'sha256', // hash
+        Buffer.from(payload, 'utf-8'),
+        {
+            key: privatePem,
+            padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+            saltLength: crypto.constants.RSA_PSS_SALTLEN_MAX_SIGN
+        }
+    );
+
+    return signature.toString('base64');
+}
+
+const INSTANCE_ID = process.env.INSTANCE_ID;
+function idGlobalDeIdLocal(id_local, id_instancia) {
+    id_instancia = id_instancia || INSTANCE_ID;
+    return id_local + ':' + id_instancia;
+}
+
+function idGlobal(id, id_instancia) {
+    if (id.includes(':')) {
+        return id;
+    }
+    return id + ':' + (id_instancia || INSTANCE_ID);
+}
+
 // Configure middleware
 const sessionMiddleware = cookieSession({
     name: 'session',
@@ -420,30 +468,47 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Primary endpoints
-app.get('/', (req, res) => {
-    let liu = getLoggedInUser(req)
+app.get('/', async (req, res) => {
+    let liu = await getLoggedInUser(req)
     if (liu === undefined) {
         res.send(loadWebpage('index.html', req, {}));
         return;
     }
-    if (users[liu]['2fa_key'] === undefined) {
+    const result = await client.query(`
+        SELECT display_name, uname, twofa_key, public_key
+        FROM users
+        WHERE user_id = $1
+    `, [liu]);
+
+    const user = result.rows[0];
+    if (user['twofa_key'] === null) {
         res.send(translate('\\!!general.debes_configurar_a2f!!\\',getUserLocales(req)));
         return;
     }
-    if (users[liu]['public_key'] === undefined) {
+    if (user['public_key'] === null) {
         res.send(loadWebpage('createUserKeypair.html', req, {}));
         return;
     }
+
     res.send(loadWebpage('chat.html', req, {
         'UID-DE-USUARIO': liu,
-        'NOMBRE_DE_PERFIL': users[liu]['display_name'],
-        'NOMBRE_DE_USUARIO': users[liu]['uname']
+        'NOMBRE_DE_PERFIL': user?.display_name,
+        'NOMBRE_DE_USUARIO': user?.uname
     }));
 });
 
-app.get('/configurarA2F', (req, res) => {
+app.get('/configurarA2F', async (req, res) => {
     let mfa_key = gen2FAKey();
-    users[getLoggedInUser(req)]['2fa_key'] = encryptAES(mfa_key, process.env.SERVER_AES_KEY);
+    const userId = await getLoggedInUser(req);
+
+    await client.query(`
+        UPDATE users
+        SET twofa_key = $1
+        WHERE user_id = $2
+    `, [
+        encryptAES(mfa_key, process.env.SERVER_AES_KEY),
+        userId
+    ]);
     res.send(loadWebpage('2fa.html', req, {'CÓDIGO_A2F':mfa_key}));
     mfa_key = undefined;
 });
@@ -455,14 +520,13 @@ app.get('/login', (req, res) => {
     }));
 });
 
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
     let sourcetype = req.body.sourcetype || 'sourcetype.web';
     const acceptable_sourcetypes_at_endpoint = [
         'sourcetype.web',
-        'sourcetype.api',
-        'sourcetype.app'
+        //'sourcetype.app' // Planned for future
     ]
-    if (!(sourcetype in acceptable_sourcetypes_at_endpoint)) {
+    if (!(acceptable_sourcetypes_at_endpoint.includes(sourcetype))) {
         res.json({
             'success': false,
             'error': 'INVALID_SOURCETYPE',
@@ -479,8 +543,16 @@ app.post('/login', (req, res) => {
     let uname = req.body.uname;
     let passwd = req.body.password;
     let mfa_code = req.body.mfa;
-    let uid = getUserByUsername(uname);
-    if (uid === undefined) {
+    
+    const result = await client.query(`
+        SELECT user_id, password, salt, twofa_key
+        FROM users
+        WHERE uname = $1
+    `, [uname]);
+
+    const user = result.rows[0];
+    
+    if (!user) {
         if (sourcetype === 'web') {
             res.status(401).send(translate('\\!!iniciar_sesión.credenciales_inválidas!!\\', getUserLocales(req)));
         } else {
@@ -496,9 +568,9 @@ app.post('/login', (req, res) => {
         }        
         return;
     }
-    let salt = users[uid]['salt'];
+    let salt = user.salt;
     passwd = calculateSha256(passwd + salt);
-    if (passwd !== users[uid]['password']) {
+    if (passwd !== user.password) {
         if (sourcetype === 'web') {
             res.status(401).send(translate('\\!!iniciar_sesión.credenciales_inválidas!!\\', getUserLocales(req)));
         } else {
@@ -514,7 +586,7 @@ app.post('/login', (req, res) => {
         }
         return;
     }
-    if (!verifyOTP(mfa_code, decryptAES(users[uid]['2fa_key'], process.env.SERVER_AES_KEY))) {
+    if (!verifyOTP(mfa_code, decryptAES(user.twofa_key, process.env.SERVER_AES_KEY))) {
         if (sourcetype === 'web') {
             res.status(401).send(translate('\\!!iniciar_sesión.credenciales_inválidas!!\\', getUserLocales(req)));
         } else {
@@ -530,9 +602,11 @@ app.post('/login', (req, res) => {
         }
         return;
     }
+    
+    // Generate a sessionid
     let sid = saltGen(sourcetype === 'sourcetype.web' ? 16 : 64);
     let i = 0;
-    while (sid in sesiones) {
+    while ((await client.query(`SELECT * FROM sessions_web WHERE id = $1`, [sid])).rowCount !== 0) {
         i++;
         if (i >= 100) {
             res.statusCode = 500;
@@ -541,8 +615,21 @@ app.post('/login', (req, res) => {
         }
         sid = saltGen(sourcetype === 'sourcetype.web' ? 16 : 64);
     }
-    let expiryTime = new Date().getTime() + (sourcetype === 'sourcetype.web' ? twoWeeks : thirtyDays);
-    sesiones[sid] = {'user':uid,'expiry':expiryTime,'sourcetype': sourcetype};
+    
+    // Expiry of sessionid
+    let expiryTime = new Date(new Date().getTime() + (sourcetype === 'sourcetype.web' ? twoWeeks : thirtyDays));
+    
+    // Register sessionid
+    if (sourcetype === 'sourcetype.web') {
+        await client.query(
+            `INSERT INTO sessions_web (id, user_id, expiry) VALUES ($1, $2, $3)`,
+            [sid, user.user_id, expiryTime]
+        );
+    } else {
+        // sourcetype.app support planned
+    }
+    
+    // Send response
     res.statusCode = 200;
     if (sourcetype === 'sourcetype.web') {
         req.session.sessionId = sid;
@@ -575,13 +662,13 @@ app.get('/oauth/github', (req, res) => {
     return res.redirect(url.toString());
 });
 
-app.get('/oauth/github/configure', (req, res) => {
+app.get('/oauth/github/configure', async (req, res) => {
     if (!github_oauth_enabled) {
         res.status(400).send(translate('\\!!iniciar_sesión.sso.github.deshabilitado_en_servidor!!\\', getUserLocales(req)));
         return;
     }
     
-    if (getLoggedInUser(req) === undefined) {
+    if (await getLoggedInUser(req) === undefined) {
         res.status(200).redirect('/');
         return;
     }
@@ -644,11 +731,11 @@ app.get('/oauth/github/callback', async (req, res) => {
         req.session.oauth_intent = undefined;
         if (oauth_intent === 'login') {
             // Identify the user
-            let uid = getUserByGithubId(userGithubId);
+            let uid = await getUserByGithubId(userGithubId);
             // Log the user in
             let sid = saltGen();
             let i = 0;
-            while (sid in sesiones) {
+            while ((await client.query(`SELECT * FROM sessions_web WHERE id = $1`, [sid])).rowCount !== 0) {
                 i++;
                 if (i >= 100) {
                     res.statusCode = 500;
@@ -659,19 +746,29 @@ app.get('/oauth/github/callback', async (req, res) => {
             }
             req.session.sessionId = sid;
             let twoWeeksTime = new Date(new Date().getTime() + twoWeeks);
-            sesiones[sid] = {'user':uid,'expiry':twoWeeksTime.getTime()};
+            await client.query(
+                `INSERT INTO sessions_web (id, user_id, expiry) VALUES ($1, $2, $3)`,
+                [sid, user.user_id, twoWeeksTime]
+            );
             res.statusCode = 200;
             res.redirect('/');
         } else if (oauth_intent === 'configure') {
-            let liu = getLoggedInUser(req);
+            let liu = await getLoggedInUser(req);
             if (liu === undefined) res.redirect('/login');
-            if (users[liu]['oauth']) {
-                users[liu]['oauth']['github_id'] = userGithubId;
-            } else {
-                users[liu]['oauth'] = {
-                    'github_id': userGithubId
-                };
-            }
+            await client.query(`
+                UPDATE users
+                SET oauth = jsonb_set(
+                    COALESCE(oauth, '{}'::jsonb),
+                    '{github_id}',
+                    to_jsonb($1::text),
+                    true
+                )
+                WHERE user_id = $2
+                `, [
+                    userGithubId,
+                    liu
+                ]
+            );
             res.status(200).redirect('/configurarCuenta');
         }
     } catch (err) {
@@ -684,7 +781,7 @@ app.get('/registrar', (req, res) => {
     res.send(loadWebpage('registrar.html', req, {}));
 });
 
-app.post('/registrar', (req, res) => {
+app.post('/registrar', async (req, res) => {
     let uname = req.body.uname;
     if (uname == undefined || uname.length == 0) {
         res.statusCode = 400;
@@ -699,9 +796,7 @@ app.post('/registrar', (req, res) => {
     }
     let correo = req.body.correo;
     if (correo == undefined || correo.length == 0 || !correo.includes('@')) {
-        res.statusCode = 400;
-        res.send(translate('\\!!registro.err.correo_inválido!!\\',getUserLocales(req)));
-        return;
+        correo = null
     }
     let clavepublica = req.body.clavepublica;
     if (clavepublica == undefined || clavepublica.length == 0) {
@@ -713,17 +808,38 @@ app.post('/registrar', (req, res) => {
     if (display_name == undefined || display_name.length == 0) {
         display_name = uname;
     }
-    if (getUserByUsername(uname)) {
+    if (await getUserByUsername(uname)) {
         res.statusCode = 400;
         res.send(translate('\\!!registro.err.usuario_ya_existe!!\\', getUserLocales(req)));
         return;
     }
-    let user = generateUser(uname, passwd, correo, clavepublica, getUserLocales(req),
-        display_name);
-    users.push(user);
+    let uid = crypto.randomUUID();
+    let salt = saltGen();
+    passwd = calculateSha256(passwd + salt)
+    await client.query(`
+        INSERT INTO users (
+            user_id,
+            uname,
+            password,
+            salt,
+            email,
+            public_key,
+            display_name
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        `, [
+            uid,
+            uname,
+            passwd,
+            salt,
+            email,
+            clavepublica,
+            display_name
+        ]
+    );
     let sid = saltGen();
     let i = 0;
-    while (sid in sesiones) {
+    while ((await client.query(`SELECT * FROM sessions_web WHERE id = $1`, [sid])).rowCount !== 0) {
         i++;
         if (i >= 100) {
             res.statusCode = 500;
@@ -733,21 +849,28 @@ app.post('/registrar', (req, res) => {
         sid = saltGen();
     }
     req.session.sessionId = sid;
-    let twoWeeksTime = new Date(new Date(). getTime() + twoWeeks);
-    sesiones[sid] = {'user':getUserByUsername(uname),'expiry':twoWeeksTime.getTime()};
+    let twoWeeksTime = new Date(new Date().getTime() + twoWeeks);
+    await client.query(`INSERT INTO sessions_web (id, user_id, expiry) VALUES ($1, $2, $3)`, [sid, uid, twoWeeksTime]);
     res.statusCode = 200;
     res.redirect('/');
     passwd = undefined;
 });
 
-app.get('/logout', (req, res) => {
-    sesiones[req.session.sessionId] = undefined;
+app.get('/logout', async (req, res) => {
+    await client.query(`DELETE FROM sessions_web WHERE id = $1`, [req.session.sessionId]);
     req.session.sessionId = undefined;
     res.status(200).redirect('/');
-})
+});
 
-app.get('/configurarCuenta', (req, res) => {
-    let liu = getLoggedInUser(req);
+app.get('/logout_all', async (req, res) => {
+    let uid = getLoggedInUser(req);
+    await client.query(`DELETE FROM sessions_web WHERE user_id = $1`, [uid]);
+    req.session.sessionId = undefined;
+    res.status(200).redirect('/');
+});
+
+app.get('/configurarCuenta', async (req, res) => {
+    let liu = await getLoggedInUser(req);
     if (liu === undefined) { res.redirect('/login'); return; }
     res.send(loadWebpage('configurarCuenta.html', req, {
         'UID': liu,
@@ -756,21 +879,21 @@ app.get('/configurarCuenta', (req, res) => {
     }));
 });
 
-app.post('/subscribe', (req, res) => {
+app.post('/subscribe', async (req, res) => {
     let subscripcion = req.body.subscripcion;
     if (!subscripcion) {
         return res.status(400).json({ error: 'Falta subscripción' });
     }
-    agregarSubscripcion(req, subscripcion);
+    await agregarSubscripcion(req, subscripcion);
     res.status(201).json({ success: true });
 });
 
-app.post('/unsubscribe', (req, res) => {
+app.post('/unsubscribe', async (req, res) => {
     let subscripcion = req.body.subscripcion;
     if (!subscripcion) {
         return res.status(400).json({ success: false, error: 'Falta subscripción' });
     }
-    quitarSubscripcion(subscripcion);
+    await quitarSubscripcion(subscripcion);
     res.status(200).json({ success: true });
 });
 
@@ -778,8 +901,8 @@ app.get('/vapidPublicKey', (req, res) => {
     res.json({ publicKey: publicVapidKey });
 });
 
-app.get('/comenzarConversacion/md', (req, res) => {
-    if (getLoggedInUser(req) === undefined) {
+app.get('/comenzarConversacion/md', async (req, res) => {
+    if (await getLoggedInUser(req) === undefined) {
         res.statusCode = 200;
         res.redirect('/login');
         return;
@@ -788,16 +911,16 @@ app.get('/comenzarConversacion/md', (req, res) => {
     res.send(loadWebpage('comenzarMD.html', req, {}));
 });
 
-app.get('/enviarClavePrivada', (req, res) => {
-    if (!getLoggedInUser(req)) {
+app.get('/enviarClavePrivada', async (req, res) => {
+    if (!await getLoggedInUser(req)) {
         res.redirect('/login');
         return;
     }
     res.send(loadWebpage('enviarClavePrivada.html', req, {}));
 });
 
-app.get('/recibirClavePrivada', (req, res) => {
-    if (!getLoggedInUser(req)) {
+app.get('/recibirClavePrivada', async (req, res) => {
+    if (!await getLoggedInUser(req)) {
         res.redirect('/login');
         return;
     }
@@ -806,7 +929,7 @@ app.get('/recibirClavePrivada', (req, res) => {
 
 app.post('/establecerFotoDePerfil', upload.single('pfp'), async (req, res) => {
     try {
-        let uid = getLoggedInUser(req);
+        let uid = await getLoggedInUser(req);
         if (uid === undefined) {
             res.redirect('/login');
             return;
@@ -837,7 +960,12 @@ app.post('/establecerFotoDePerfil', upload.single('pfp'), async (req, res) => {
             .toFile(tempPath);
         fs.renameSync(tempPath, outputPath);
         
-        users[uid]['profile-picture'] = outputPath.toString();
+        await client.query(
+            `UPDATE users
+            SET profile_picture = $1
+            WHERE user_id = $2`,
+            [outputPath.toString(), uid]
+        );
         
         res.status(200).redirect('/configurarCuenta');
     } catch (err) {
@@ -846,8 +974,8 @@ app.post('/establecerFotoDePerfil', upload.single('pfp'), async (req, res) => {
     }
 });
 
-app.delete('/desestablecerFotoDePerfil', (req, res) => {
-    let uid = getLoggedInUser(req);
+app.delete('/desestablecerFotoDePerfil', async (req, res) => {
+    let uid = await getLoggedInUser(req);
     if (uid === undefined) {
         res.redirect('/login');
         return;
@@ -864,7 +992,12 @@ app.delete('/desestablecerFotoDePerfil', (req, res) => {
         fs.rmSync(filePath);
     }
     
-    users[uid]['profile-picture'] = undefined;
+    await client.query(
+        `UPDATE users
+        SET profile_picture = NULL
+        WHERE user_id = $1`,
+        [uid]
+    );
     
     res.status(204).end();
 });
@@ -903,16 +1036,17 @@ app.get('/setlang/clear', (req, res) => {
 app.get('/setlang/:languages', (req, res) => {
     let languages = [];
     for (let language of req.params.languages.split(',')) {
-        if (language in available_languages) {
+        if (available_languages.includes(language)) {
             languages.push(language);
         }
     }
+    req.session.lang = languages;
     res.redirect('/');
 });
 
-app.get('/app/getUIDByUsername', (req, res) => {
+app.get('/app/getUIDByUsername', async (req, res) => {
     let username = req.query.username;
-    let uid = getUserByUsername(username);
+    let uid = await getUserByUsername(username);
     if (uid === undefined) {
         res.statusCode = 400;
         res.send(translate('\\!!app.usuario_no_existe!!\\', getUserLocales(req)));
@@ -922,86 +1056,175 @@ app.get('/app/getUIDByUsername', (req, res) => {
     res.send(uid);
 })
 
-app.get('/app/getUserPublicKey', (req, res) => {
+app.get('/app/getUserPublicKey', async (req, res) => {
     let uid = req.query.user;
-    if (typeof uid == 'string') {
-        uid = parseInt(uid);
-        if (uid === NaN) {
-            res.statusCode = 400;
-            res.send(translate('\\!!app.uid_no_válido!!\\', getUserLocales(req)));
-            return;
-        }
+    let user_instance = INSTANCE_ID;
+    let is_local = true;
+    if (uid.includes(':')) {
+        let usplit = uid.split(':');
+        uid = usplit[0];
+        user_instance = usplit[1];
+        is_local = user_instance === INSTANCE_ID;
     }
-    if (users[uid] === undefined) {
+    
+    if (!is_local) {
+        // Federación aún no implementada
+        res.statusCode = 501;
+        res.send('Funcionalidad de federación aún no implementada');
+        return;
+    }
+    
+    let result = await client.query(`SELECT public_key FROM users WHERE user_id = $1`, [uid]);
+    
+    if (result.rowCount === 0) {
         res.statusCode = 400;
         res.send(translate('\\!!app.usuario_no_existe!!\\', getUserLocales(req)));
         return;
     }
-    let key = users[uid]['public_key'];
+    let key = result.rows[0]?.public_key;
     res.send(key);
 });
 
-app.get('/app/getLoggedInUser', (req, res) => {
-    let liu = getLoggedInUser(req);
+app.get('/app/getLoggedInUser', async (req, res) => {
+    let liu = await getLoggedInUser(req);
     res.statusCode = 200;
     res.send(liu);
 })
 
-app.get('/app/converesDeUsuario', (req, res) => {
-    let liu = getLoggedInUser(req);
+app.get('/app/converesDeUsuario', async (req, res) => {
+    let liu = await getLoggedInUser(req);
     if (liu === undefined) {
         res.json([]);
         return;
     }
-    let converesDeUsuario = users[liu]['conversations'];
+    
+    const result = await client.query(
+        `SELECT conver_global_id
+        FROM user_conversations
+        WHERE user_id = $1`,
+        [liu]
+    );
+
+    const converesDeUsuario = result.rows.map(r => r.conver_global_id);
+
     res.json(converesDeUsuario);
 });
 
-app.get('/app/nombreDeConver', (req, res) => {
+app.get('/app/nombreDeConver', async (req, res) => {
     let conver = req.query.conver;
-    let liu = getLoggedInUser(req);
+    let conver_instance = INSTANCE_ID;
+    if (conver.includes(':')) {
+        let csplit = conver.split(':');
+        conver = csplit[0];
+        conver_instance = csplit[1];
+    }
+    
+    // Federación aún no implementada
+    if (conver_instance !== INSTANCE_ID) {
+        res.statusCode = 501;
+        res.send('Funcionalidad de federación aún no implementada');
+        return;
+    }
+    
+    // Identifica el usuario
+    let liu = await getLoggedInUser(req);
     if (liu === undefined) {
         res.statusCode = 401;
         res.send('Debes iniciar sesión primero');
         return;
     }
-    if (!(conver in converes)) {
+    
+    // Identifica la conversación y confirma que exista
+    let queryRes = await client.query(`SELECT * FROM conversations WHERE conver_id = $1`, [conver]);
+    if (queryRes.rowCount === 0) {
         res.statusCode = 400;
         res.send('No existe la conversación');
         return;
     }
-    if (converes[conver]['conversation-users'][liu] === undefined) {
+    
+    // Confirma que el usuario está en la conversación
+    let queryRes2 = await client.query(
+        `SELECT * FROM conversation_participants WHERE conver_id = $1 AND user_global_id = $2`,
+        [
+            conver,
+            idGlobalDeIdLocal(liu, INSTANCE_ID)
+        ]
+    );
+    if (queryRes2.rowCount === 0) {
         res.statusCode = 403;
         res.send('No estás en esta conversación');
         return;
     }
+    
+    // Devuelve el nombre de la conversación
     res.statusCode = 200;
-    res.send(converes[conver]['conversation-name']);
+    res.send(queryRes.rows[0]['conver_name']);
 });
 
-app.get('/app/llaveAESDeConver', (req, res) => {
+app.get('/app/llaveAESDeConver', async (req, res) => {
     let conver = req.query.conver;
-    let liu = getLoggedInUser(req);
+    let conver_instance = INSTANCE_ID;
+    if (conver.includes(':')) {
+        let csplit = conver.split(':');
+        conver = csplit[0];
+        conver_instance = csplit[1];
+    }
+    
+    // Federación aún no implementada
+    if (conver_instance !== INSTANCE_ID) {
+        res.statusCode = 501;
+        res.send('Funcionalidad de federación aún no implementada');
+        return;
+    }
+    
+    // Identificar el usuario
+    let liu = await getLoggedInUser(req, 'llaveAESDeConver//' + conver);
     if (liu === undefined) {
         res.statusCode = 401;
         res.send('Debes iniciar sesión primero');
         return;
     }
-    if (!conver in converes) {
+    
+    
+    // Identifica la conversación y confirma que exista
+    let queryRes = await client.query(`SELECT * FROM conversations WHERE conver_id = $1`, [conver]);
+    if (queryRes.rowCount === 0) {
         res.statusCode = 400;
         res.send('No existe la conversación');
         return;
     }
-    if (converes[conver]['conversation-users'][liu] === undefined) {
+    
+    // Confirma que el usuario está en la conversación
+    let queryRes2 = await client.query(
+        `SELECT * FROM conversation_participants WHERE conver_id = $1 AND user_global_id = $2`,
+        [
+            conver,
+            idGlobalDeIdLocal(liu, INSTANCE_ID)
+        ]
+    );
+    if (queryRes2.rowCount === 0) {
         res.statusCode = 403;
         res.send('No estás en esta conversación');
         return;
     }
+    
+    // Regresar la llave de conversación
     res.statusCode = 200;
-    res.send(converes[conver]['conversation-users'][liu]);
+    res.send(queryRes2.rows[0]['encrypted_key']);
 });
 
-app.post('/app/comenzarConversacion/md', (req, res) => {
+app.get('/app/converModoMensajesAutenticados', async (req, res) => {
+    let conver_id = req.query.conver_id;
+    
+    // Federación aún no implementada
+    
+    let queryRes = await client.query(`SELECT settings->>'unverified_message_sender' AS ums WHERE conver_id = $1`, [conver_id]);
+    
+    res.statusCode = 200;
+    res.send(queryRes.rows[0]?.ums == false);
+});
+
+app.post('/app/comenzarConversacion/md', async (req, res) => {
     let usersToAdd = req.body.users;
     let nombreConver = req.body.nombreConver;
     
@@ -1011,10 +1234,9 @@ app.post('/app/comenzarConversacion/md', (req, res) => {
         return;
     }
     
-    let date = new Date().getTime();
     let uuid = crypto.randomUUID();
     let i = 0;
-    while (uuid in converes) {
+    while ((await client.query(`SELECT * FROM conversations WHERE conver_id = $1`, [uuid])).rowCount !== 0) {
         i++
         if (i > 500) {
             res.statusCode = 500;
@@ -1024,57 +1246,130 @@ app.post('/app/comenzarConversacion/md', (req, res) => {
         uuid = crypto.randomUUID();
     }
     
+    await client.query(
+        `INSERT INTO conversations (conver_id, conver_name, conver_type, crypt-type, settings)
+        VALUES ($1, $2, 0, 'AES-GCM', $3)`,
+        [
+            uuid,
+            nombreConver,
+            JSON.stringify({
+                'font': undefined, // cuando es undefined: usa fuentes predeterminados
+                'require-consent-to-add': false, // requiere que todos los usuarios acepten para agregar más usuarios
+            })
+        ]
+    );
+    
+    
+    // Agregar usuarios
     for (user of Object.keys(usersToAdd)) {
-        if (user in users) {
-            users[user]['conversations'].push(uuid);
+        let user_id_local = user;
+        let user_instance = INSTANCE_ID;
+        let is_local = true;
+        if (user_id_local.includes(':')) {
+            let usplit = user_id_local.split(':');
+            user_id_local = usplit[0];
+            user_instance = usplit[1];
+            is_local = user_instance === INSTANCE_ID;
+        }
+        
+        // Ver si el usuario es local (de esta instancia) o externo (de otra instancia)
+        if (is_local) {
+            if ((await client.query(`SELECT * FROM users WHERE user_id = $1`, [user_id_local])).rowCount !== 0) {
+                // El usuario existe
+                // Agregar conversación a lista de conversaciones del usuario
+                await client.query(
+                    `INSERT INTO user_conversations (conver_global_id, user_id, encrypted_key) VALUES ($1, $2, $3)`,
+                    [
+                        idGlobalDeIdLocal(uuid, INSTANCE_ID),
+                        user_id_local,
+                        usersToAdd[user]
+                    ]
+                );
+                
+                // Agregar usuario a lista de usuarios de conversación
+                await client.query(
+                    `INSERT INTO conversation_participants (conver_id, user_global_id, encrypted_key) VALUES ($1, $2, $3)`,
+                    [
+                        uuid,
+                        idGlobalDeIdLocal(user_id_local, user_instance),
+                        usersToAdd[user]
+                    ]
+                );
+            } else {
+                // El usuario no existe
+                usersToAdd[user] = undefined;
+            }
         } else {
-            usersToAdd[user] = undefined;
+            // Federación aún no implementada
+            if (user_instance !== INSTANCE_ID) {
+                res.statusCode = 501;
+                res.send('Funcionalidad de federación aún no implementada');
+                return;
+            }
         }
     }
     
-    let conver = {
-        'conversation-type': 0, // Usuario a usuario, estilo mensaje directo
-        'conversation-name': nombreConver,
-        'creation-date': date,
-        'conversation-users': usersToAdd,
-        'conversation-settings': {
-            'font': undefined, // cuando es undefined: usa fuentes predeterminados
-            'require-consent-to-add': false, // requiere que todos los usuarios acepten para agregar más usuarios
-        },
-        'messages': []
-    }
-    
-    converes[uuid] = conver;
     res.statusCode = 200;
     res.send(uuid);
 });
 
-app.get('/app/fotoDePerfil', (req, res) => {
+app.get('/app/fotoDePerfil', async (req, res) => {
     let uid = req.query.user;
-    uid = parseInt(uid);
-    if ((uid == NaN) || !(uid in users)) {
-        res.sendFile(__dirname + '/assets/imgs/FDP_predeterminado.svg');
-        return;
+    let user_instance = INSTANCE_ID;
+    let is_local = true;
+    if (uid.includes(':')) {
+        let usplit = uid.split(':');
+        uid = usplit[0];
+        user_instance = usplit[1];
+        is_local = user_instance === INSTANCE_ID;
     }
-    if (users[uid]['profile-picture'] !== undefined) {
-        //res.set('Content-Type', users[uid]['profile-picture']['type']); // images/png images/svg images/jpeg
-        res.sendFile(users[uid]['profile-picture']);
-        return;
-    }
+    
+    if (is_local) {
+        if ((uid === undefined) || (await client.query(`SELECT * FROM users WHERE user_id = $1`, [uid])).rowCount === 0) {
+            res.sendFile(__dirname + '/assets/imgs/FDP_predeterminado.svg');
+            return;
+        }
+        let pfp_location = (await client.query(
+                `SELECT profile_picture FROM users WHERE user_id = $1`,
+                [uid]
+            )).rows[0]['profile_picture']
+        if (pfp_location !== null) {
+            //res.set('Content-Type', users[uid]['profile-picture']['type']); // images/png images/svg images/jpeg
+            res.sendFile(pfp_location);
+            return;
+        }
+    } // Federación aún no implementada
+    
     res.sendFile(__dirname + '/assets/imgs/FDP_predeterminado.svg');
 });
 
-app.get('/app/mensajesNuevos', (req, res) => {
+app.get('/app/mensajesNuevos', async (req, res) => {
     let desde = parseInt(req.query.desde); // Mensaje más viejo
     let hasta = parseInt(req.query.hasta); // Mensaje más nuevo
     let conver = req.query.conver;
-    if (!(conver in converes)) {
+    let conver_instance = INSTANCE_ID;
+    let is_local = true;
+    if (conver.includes(':')) {
+        let csplit = conver.split(':');
+        conver = csplit[0];
+        conver_instance = csplit[1];
+        is_local = conver_instance == INSTANCE_ID;
+    }
+    
+    if (!is_local) {
+        // Federación aún no implementada
+        if (conver_instance !== INSTANCE_ID) {
+            res.statusCode = 501;
+            res.send('Funcionalidad de federación aún no implementada');
+            return;
+        }
+    }
+    
+    if ((await client.query(`SELECT * FROM conversations WHERE conver_id = $1`, [conver])).rowCount === 0) {
         res.statusCode = 400;
         res.send('La conversación solicitada no existe');
         return;
     }
-    let mensajesDeConver = converes[conver]['messages'];
-    let n = mensajesDeConver.length;
     if (!Number.isInteger(desde) || !Number.isInteger(hasta)) {
         res.statusCode = 400;
         res.send('Los numeros ingresados no son válidos');
@@ -1088,6 +1383,9 @@ app.get('/app/mensajesNuevos', (req, res) => {
     if (hasta < 0) {
         hasta = 0;
     }
+    
+    let mensajesDeConver = await client.query(`SELECT * FROM messages WHERE conver_id = $1 ORDER BY id ASC`, [conver]);
+    let n = mensajesDeConver.rowCount;
     
     // convertir índices reversos a índices reales
     let i0 = n - 1 - desde;
@@ -1106,17 +1404,30 @@ app.get('/app/mensajesNuevos', (req, res) => {
     let hasta_verificado = Math.max(i0, i1);
 
     // slice toma (start, endExclusive) -> por eso end + 1
-    let mensajesParaDevolver = mensajesDeConver.slice(desde_verificado, hasta_verificado + 1);
+    let mensajesParaDevolver = mensajesDeConver.rows.slice(desde_verificado, hasta_verificado + 1);
     
     res.send(mensajesParaDevolver);
 });
 
-app.get('/app/nombreParaMostrarPorUID', (req, res) => {
+app.get('/app/nombreParaMostrarPorUID', async (req, res) => {
     let uid = req.query.uid;
-    if (uid in users) {
-        res.send(users[uid]['display_name']);
-        return;
+    let user_instance = INSTANCE_ID;
+    let is_local = true;
+    if (uid.includes(':')) {
+        let usplit = uid.split(':');
+        uid = usplit[0];
+        user_instance = usplit[1];
+        is_local = user_instance === INSTANCE_ID;
     }
+    try {
+        let queryRes = (await client.query(`SELECT display_name FROM users WHERE user_id = $1`, [uid]));
+        if (queryRes.rowCount !== 0) {
+            res.statusCode = 200;
+            res.send(queryRes.rows[0]['display_name']);
+            return;
+        }
+    } catch {}
+    
     res.statusCode = 400;
     res.send('El usuario especificado no se ha encontrado');
 });
@@ -1209,6 +1520,199 @@ app.get("/otpqrgen/:label", async (req, res) => {
     }
 });
 
+// Endpoints para API
+app.post('/api/register_api_key', async (req, res) => {
+    let username = req.body.username;
+    let passwd = req.body.password;
+    let totp = req.body.totp;
+    let pubkey = req.body.pubkey;
+    let sample = req.body.sample;
+    
+    // Revisar uid
+    let uid = await getUserByUsername(username);
+    if (uid === undefined) {
+        res.status(401).json({
+            'success': false,
+            'error': 'INCORRECT_CREDENTIALS'
+        });
+        return;
+    }
+    
+    let queryRes = await client.query('SELECT salt, password, twofa_key FROM users WHERE user_id = $1', [uid]);
+    
+    // Revisar contraseña
+    let salt = queryRes.rows[0].salt
+    if (calculateSha256(queryRes.rows[0].password + salt) !== calculateSha256(passwd + salt)) {
+        res.status(401).json({
+            'success': false,
+            'error': 'INCORRECT_CREDENTIALS'
+        });
+        return;
+    }
+    
+    // Revisar código de A2F
+    if (!verifyOTP(totp, decryptAES(queryRes.rows[0].twofa_key, process.env.SERVER_AES_KEY))) {
+        res.status(401).json({
+            'success': false,
+            'error': 'INCORRECT_CREDENTIALS'
+        });
+        return;
+    }
+    
+    // Revisar muestra
+    if (!verificarFirma(pubkey, 'sample', sample)) {
+        res.status(400).json({
+            'success': false,
+            'error': 'PUBLICKEY_DOES_NOT_MATCH_SAMPLE'
+        });
+        return;
+    }
+    
+    await client.query(`INSERT INTO llaves_api (pub_rsa_pss_key, user_id) VALUES ($1, $2)`, [pubkey, uid]);
+    
+    res.statusCode = 200;
+    res.json({
+        'success': true
+    });
+});
+
+app.get('/api/verify_api_key', async (req, res) => {
+    let apipubkey = req.query.apipubkey;
+    let uid_query = await client.query(`SELECT user_id FROM llaves_api WHERE pub_rsa_pss_key = $1`, [apipubkey]);
+    res.status(200).json((uid_query.rowCount !== 0) ? {
+        'uid': uid_query.rows[0],
+        'verification_OK': true
+    } : {
+        'verification_OK': false
+    });
+});
+
+app.post('/api/enviar_mensaje', async (req, res) => {
+    let datosDeMensaje = req.body.datosDeMensaje;
+    let conver = req.body.conver;
+    let notificar = req.body.notificar; // Función no soportada
+    let usuario_encriptado = req.body.usuario_encriptado;
+    let rts = { datosDeMensaje, conver, notificar, usuario_encriptado };
+    let sigreq = `enviar_mensaje//${JSON.stringify(rts)}`;
+    let uid = await getLoggedInUser(req, sigreq);
+    if (uid === undefined) {
+        res.status(401).json({
+            'success': false,
+            'error': 'INVALID_CREDENTIALS',
+        });
+        return;
+    }
+    let conver_instance = INSTANCE_ID;
+    let is_local = true;
+    if (conver.includes(':')) {
+        let csplit = conver.split(':');
+        conver = csplit[0];
+        conver_instance = csplit[1];
+        is_local = conver_instance === INSTANCE_ID;
+    }
+    
+    if ((process.env.ISOLATED === 1 || true) && (is_local)) { // Federación aún no soportada
+        res.status(401).json({
+            'success': false,
+            'error': 'ISOLATED_INSTANCE_CANNOT_SEND_EXTERNALLY'
+        });
+        return;
+    }
+    
+    // Verificar que esté en la conversación y que sea conversación valida
+    let converQuery = await client.query(`SELECT conver_name FROM conversations WHERE conver_id = $1`, [conver]);
+    
+    let miembrosParaEmitir = (await client.query(
+        `SELECT user_global_id FROM conversation_participants WHERE conver_id = $1`,
+        [conver]
+    )).rows.map(r => r['user_global_id']);
+    
+    if (((converQuery.rowCount === 0) || (miembrosParaEmitir.includes(idGlobalDeIdLocal(uid, INSTANCE_ID))))) {
+        res.status(403).json({
+            'success': false,
+            'error': 'NOT_IN_CONVERSATION_OR_CONVERSATION_DOES_NOT_EXIST'
+        });
+        return;
+    }
+    
+    // Empujar mensaje a servidor
+    await client.query(
+        `INSERT INTO messages (conver_id, sender_global_id, ciphertext, iv) VALUES ($1, $2, $3, $4)`,
+        [
+            conver,
+            idGlobalDeIdLocal(uid, INSTANCE_ID),
+            datosDeMensaje.ciphertext,
+            datosDeMensaje.iv
+        ]
+    );
+    
+    // Enviar mensaje a usuarios activos
+    let socketsParaEmitir = [];
+    let miembrosEnLinea = [];
+    //console.log(miembrosParaEmitir);
+    for (let miembro_global of miembrosParaEmitir) {
+        let msplit = miembro_global.split(':');
+        let miembro = msplit[0];
+        let miembro_instancia = msplit[1];
+        if (miembro_instancia === INSTANCE_ID) {
+            if (miembro in socketIds) {
+                miembrosEnLinea.push(miembro);
+                for (id of socketIds[miembro]) {
+                    socketsParaEmitir.push(id);
+                }
+            }
+        } // Federación aún no implementada
+    }
+    for (let socketId of socketsParaEmitir) {
+        io.to(socketId).emit('recibirMensaje', rts);
+    }
+    
+    // Notifica a los usuarios listados
+    let subscripcionesDeNotificaciones = (await client.query(`SELECT * FROM web_notification_subscriptions`)).rows;
+    let nombreDeConver = (converQuery.rows[0]['conver_name']);
+    for (let miembro of rts['notificar']) {
+        if (miembro === undefined) { continue; }
+        let miembro_instancia = INSTANCE_ID;
+        let is_local = true;
+        if (miembro.includes(':')) {
+            let msplit = miembro.split(':');
+            miembro = msplit[0];
+            miembro_instancia = msplit[1];
+            is_local = miembro_instancia === INSTANCE_ID;
+        }
+        let miembro_global = idGlobalDeIdLocal(miembro, miembro_instancia);
+        
+        if (!is_local) continue; // Federación aún no implementada
+        
+        if (!miembrosParaEmitir.includes(miembro)) { continue; }
+        if (!miembrosEnLinea.includes(miembro)) {
+            if (subscripcionesDeNotificaciones.map(r => r['user_id']).includes(miembro)) {
+                for (let subscripcion of subscripcionesDeNotificaciones.filter(r => r['user_id'] == miembro)[0]) {
+                    enviarNotificacion(subscripcion, {
+                        title: 'Nuevo mensaje',
+                        body: 'Alguien te ha mandado un mensaje en ' + nombreDeConver,
+                        url: '/'
+                    });
+                }
+            }
+        }
+    }
+});
+
+app.get('/api/lista_converes', async (req, res) => {
+    let uid = await getLoggedInUser(req, 'api//lista_converes');
+    if (uid === undefined) {
+        res.status(401).json({
+            'success': false,
+            'error': 'INVALID_CREDENTIALS',
+        });
+        return;
+    }
+    res.status(200).json((
+        await client.query(`SELECT conver_global_id FROM user_conversations WHERE user_id = $1`, [uid])
+    ).rows.map(r => r['conver_global_id']));
+});
+
 // Endpoints administrativos
 app.get('/admin/refreshLangFiles', (req, res) => {
     refreshLangFiles();
@@ -1220,6 +1724,139 @@ app.get('/usos_del_servidor/mensajeador', (req, res) => {
     res.status(200).send(Buffer.from([0xF3, 0xD4]));
 });
 
+// Endpoints de federación
+app.get('/federacion/id_instancia', (req, res) => {
+    res.statusCode = 200;
+    res.send(INSTANCE_ID);
+});
+
+const PUB_RSA_PSS_KEY_B64 = fs.existsSync('./federation/pubkey_rsa_pss.pem') ?
+    fs.readFileSync('./federation/pubkey_rsa_pss.pem') :
+    process.env.PUB_RSA_PSS_KEY;
+const PRI_RSA_PSS_KEY_B64 = fs.existsSync('./federation/privatekey_rsa_pss.pem') ?
+    fs.readFileSync('./federation/privatekey_rsa_pss.pem') :
+    process.env.PRI_RSA_PSS_KEY;
+const PUB_RSA_PSS_KEY = Buffer.from(PUB_RSA_PSS_KEY_B64, 'base64').toString('utf-8');
+const PRI_RSA_PSS_KEY = Buffer.from(PRI_RSA_PSS_KEY_B64, 'base64').toString('utf-8');
+
+app.get('/federacion/reconocer_instancia/:ubicacion', async (req, res) => {
+    let loc = new URL('https://' + req.body.ubicacion + '/federacion/reconocer_instancia');
+    let query = {
+        'pub_rsa_pss_key': PUB_RSA_PSS_KEY_B64,
+        'sample': firmar(PRI_RSA_PSS_KEY, 'sample'), // firma 'sample' con la llave
+        'primary_address': process.env.IP,
+        'primary_port': process.env.PORT,
+        'instance_id': INSTANCE_ID,
+        'name_full': process.env.INSTANCE_NAME,
+        'code': process.env.INSTANCE_CODE,
+        'display_name': process.env.INSTANCE_DISPLAY_NAME,
+        'request_return': true
+    };
+    
+    let response = await fetch(loc, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(query)
+    });
+    
+    res.statusCode = response.status;
+    res.send(await response.json());
+});
+
+app.post('/federacion/reconocer_instancia', async (req, res) => {
+    let pub_rsa_pss_key = req.body.pub_rsa_pss_key;
+    let sample = req.body.sample;
+    let primary_address = req.body.primary_address;
+    let primary_port = req.body.primary_port;
+    let instance_id = req.body.instance_id;
+    let name_full = req.body.name_full;
+    let code = req.body.code;
+    let display_name = req.body.display_name;
+    let request_return = req.body.request_return;
+    
+    if (!(pub_rsa_pss_key && sample && primary_address && primary_port && instance_id && code)) {
+        res.statusCode = 400;
+        res.json({
+            'success': false,
+            'error': 'MISSING_REQUIRED_INFORMATION'
+        });
+        return;
+    }
+    
+    if (!(display_name || name_full)) { name_full = display_name = code; }
+    else if (!display_name) { display_name = name_full; }
+    else if (!name_full) { name_full = display_name; }
+    
+    if (!verificarFirma(Buffer.from(pub_rsa_pss_key, 'base64').toString('utf-8'), 'sample', sample)) {
+        res.statusCode = 401;
+        res.json({
+            'success': false,
+            'error': 'PROVIDED_SAMPLE_INVALID'
+        });
+        return;
+    }
+    
+    let alreadyExistsQuery = await client.query(`SELECT * FROM instances WHERE instance_id = $1 OR code = $2`);
+    
+    if (alreadyExistsQuery.rowCount !== 0) {
+        res.statusCode = 500;
+        res.send({
+            'success': false,
+            'error': 'INSTANCE_ID_OR_CODE_ALREADY_EXISTS'
+        });
+        return;
+    }
+    
+    await client.query(
+        `INSERT INTO instances
+        (instance_id, name_full, display_name, address, port, rsa_pss_public_key, code)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+            instance_id,
+            name_full,
+            display_name,
+            primary_address,
+            primary_port,
+            pub_rsa_pss_key,
+            code
+        ]
+    );
+    
+    if (request_return) {
+        let loc = new URL('https://' + primary_address + ':' + primary_port + '/federacion/reconocer_instancia');
+        let query = {
+            'pub_rsa_pss_key': PUB_RSA_PSS_KEY_B64,
+            'sample': firmar(PRI_RSA_PSS_KEY, 'sample'), // firma 'sample' con la llave
+            'primary_address': process.env.IP,
+            'primary_port': process.env.PORT,
+            'instance_id': INSTANCE_ID,
+            'name_full': process.env.INSTANCE_NAME,
+            'code': process.env.INSTANCE_CODE,
+            'display_name': process.env.INSTANCE_DISPLAY_NAME,
+            'request_return': true
+        };
+        
+        let response = await fetch(loc, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(query)
+        });
+        
+        res.statusCode = response.status;
+        res.send(await response.json());
+        return;
+    }
+    
+    res.statusCode = 200;
+    res.send({
+        'success': true
+    });
+});
+
 // Socket.io
 io.use((socket, next) => {
     sessionMiddleware(socket.request, socket.request.res || {}, next);
@@ -1228,58 +1865,97 @@ io.use((socket, next) => {
 var socketIds = {} // key: user UUID, value: array of socketIds
 var intencionesDeEnviarClavePrivada = {} // key: id de intención, valor: {socketId, userId, IP}
 
-io.on('connection', (socket) => {
-    if (getLoggedInUser(socket.request) === undefined) {
+io.on('connection', async (socket) => {
+    let liu = await getLoggedInUser(socket.request);
+    if (liu === undefined) {
         socket.disconnect(true);
     }
-    if (socketIds[getLoggedInUser(socket.request)] === undefined) {
-        socketIds[getLoggedInUser(socket.request)] = [];
+    let liu_global = idGlobalDeIdLocal(liu, INSTANCE_ID);
+    if (socketIds[liu] === undefined) {
+        socketIds[liu] = [];
     }
-    socketIds[getLoggedInUser(socket.request)].push(socket.id);
+    socketIds[liu].push(socket.id);
     //console.log(socketIds);
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
         //console.log('user disconnected');
-        let liu = getLoggedInUser(socket.request);
         if (liu !== undefined) socketIds[liu].splice(socketIds[liu].indexOf(socket.id), 1);
     });
     
     // Sistema de mensajes
-    socket.on('enviarMsg', (msg) => {
+    socket.on('enviarMsg', async (msg) => {
         //console.log('message: ' + JSON.stringify(msg));
         // Agregar mensaje a conversación
         let datosDeMensaje = msg['datosDeMensaje'];
         let conver = msg['conver'];
-        if ((conver in converes) && (getLoggedInUser(socket.request) in converes[conver]['conversation-users'])) {
-            converes[conver]['messages'].push(datosDeMensaje);
+        let conver_instance = INSTANCE_ID;
+        let is_local = true;
+        if (conver.includes(':')) {
+            let csplit = conver.split(':');
+            conver = csplit[0];
+            conver_instance = csplit[1];
+            is_local = conver_instance === INSTANCE_ID;
+        }
+        
+        if (!is_local) return; // Federación aún no implementada
+        
+        let converQuery = await client.query(`SELECT * FROM conversations WHERE conver_id = $1`, [conver]);
+        let converParticipantsQuery = await client.query(
+            `SELECT * FROM conversation_participants WHERE conver_id = $1`, [conver]
+        );
+        let conversationParticipants = converParticipantsQuery.rows.map(r => r['user_global_id']);
+        if ((converQuery.rowCount !== 0) && (conversationParticipants.includes(liu_global))) {
+            await client.query(
+                `INSERT INTO messages (conver_id, sender_global_id, ciphertext, iv) VALUES ($1, $2, $3, $4)`,
+                [
+                    conver,
+                    liu_global,
+                    datosDeMensaje.ciphertext,
+                    datosDeMensaje.iv
+                ]
+            );
             
             // Emitir a miembros en linea
-            let miembrosParaEmitir = Object.keys(converes[conver]['conversation-users']);
             let socketsParaEmitir = [];
             let miembrosEnLinea = [];
-            //console.log(miembrosParaEmitir);
-            for (miembro of miembrosParaEmitir) {
-                if (miembro in socketIds) {
-                    miembrosEnLinea.push(miembro);
-                    for (id of socketIds[miembro]) {
+            for (miembro of conversationParticipants) {
+                let msplit = miembro.split(':');
+                if (msplit[1] !== INSTANCE_ID) continue; // Federación aún no implementada
+                if (msplit[0] in socketIds) {
+                    miembrosEnLinea.push(msplit[0]);
+                    for (id of socketIds[msplit[0]]) {
                         socketsParaEmitir.push(id);
                     }
                 }
             }
-            for (socketId of socketsParaEmitir) {
+            for (let socketId of socketsParaEmitir) {
                 io.to(socketId).emit('recibirMensaje', msg);
             }
             
             // Notificar a miembros listados para notificación
-            for (miembro of msg['notificar']) {
-                let uidMiembro = getUserByUsername(miembro);
+            let subscripcionesDeNotificaciones = (await client.query(`SELECT * FROM web_notification_subscriptions`)).rows;
+            for (let miembro of msg['notificar']) {
+                let uidMiembro = await getUserByUsername(miembro);
                 if (uidMiembro === undefined) { continue; }
-                if (!Object.keys(converes[conver]['conversation-users']).includes(uidMiembro)) { continue; }
+                let miembro_instancia = INSTANCE_ID;
+                let is_local = true;
+                if (uidMiembro.includes(':')) {
+                    let msplit = uidMiembro.split(':');
+                    uidMiembro = msplit[0];
+                    miembro_instancia = msplit[1];
+                    is_local = miembro_instancia === INSTANCE_ID;
+                }
+                // let miembro_global = idGlobalDeIdLocal(uidMiembro, miembro_instancia);
+                
+                if (!is_local) continue; // Federación aún no implementada
+                
+                if (uidMiembro === undefined) { continue; }
+                if (!conversationParticipants.includes(uidMiembro)) { continue; }
                 if (!miembrosEnLinea.includes(uidMiembro)) {
-                    if (Object.keys(subscripciones).includes(uidMiembro)) {
-                        for (subscripcion of subscripciones[uidMiembro]) {
+                    if (subscripcionesDeNotificaciones.map(r => r['user_id']).includes(uidMiembro)) { // AQUÍ
+                        for (subscripcion of subscripcionesDeNotificaciones.filter(r => r['user_id'] == uidMiembro)) {
                             enviarNotificacion(subscripcion, {
                                 title: 'Nuevo mensaje',
-                                body: 'Alguien te ha mandado un mensaje en ' + converes[conver]['conversation-name'],
+                                body: 'Alguien te ha mandado un mensaje en ' + converQuery.rows[0].conver_name,
                                 url: '/'
                             });
                         }
@@ -1290,25 +1966,25 @@ io.on('connection', (socket) => {
     });
     
     // Envio de clave privada de un dispositivo a otro
-    socket.on('intencionEnviarClavePrivada', (datos) => { // Paso 1 (emitido por cliente enviador)
+    socket.on('intencionEnviarClavePrivada', async (datos) => { // Paso 1 (emitido por cliente enviador)
         let idDeIntencion = datos['id'];
-        if (!(idDeIntencion in Object.keys(intencionesDeEnviarClavePrivada))) {
+        if (!(Object.keys(intencionesDeEnviarClavePrivada).includes(idDeIntencion))) {
             intencionesDeEnviarClavePrivada[idDeIntencion] = {
                 'socketId': socket.id,
-                'userid': getLoggedInUser(socket.request),
+                'userid': await getLoggedInUser(socket.request),
                 'ip': socket.handshake.address
             };
         } else {
             socket.to(socket.id).emit('idIECPExistente', idDeIntencion);
         }
     });
-    socket.on('intencionRecibirClavePrivada', (datos) => { // Paso 2 (emitido por cliente recibidor)
+    socket.on('intencionRecibirClavePrivada', async (datos) => { // Paso 2 (emitido por cliente recibidor)
         let idDeIntencion = datos['id'];
         if (Object.keys(intencionesDeEnviarClavePrivada).includes(idDeIntencion)) {
             let intencionDeEnviar = intencionesDeEnviarClavePrivada[idDeIntencion];
             let clavePublicaDeEnvio = datos['clave-publica'];
             let ipDeRecibidor = socket.handshake.address;
-            let usuarioRecibidor = getLoggedInUser(socket.request);
+            let usuarioRecibidor = await getLoggedInUser(socket.request);
             
             // Verificar identidad del usuario (recuerda que el ciente mandador también debe revisar esto)
             if (ipDeRecibidor === intencionDeEnviar['ip']) {
@@ -1332,10 +2008,11 @@ io.on('connection', (socket) => {
 
 // Save data when terminating
 function saveData() {
-    fs.writeFileSync('./data/users.json', JSON.stringify(users));
-    fs.writeFileSync('./data/sesiones.json', JSON.stringify(sesiones));
-    fs.writeFileSync('./data/conversaciones.json', JSON.stringify(converes));
-    fs.writeFileSync('./data/subscripciones.json', JSON.stringify(subscripciones));
+    // fs.writeFileSync('./data/users.json', JSON.stringify(users));
+    // fs.writeFileSync('./data/sesiones.json', JSON.stringify(sesiones));
+    // fs.writeFileSync('./data/conversaciones.json', JSON.stringify(converes));
+    // fs.writeFileSync('./data/subscripciones.json', JSON.stringify(subscripciones));
+    // fs.writeFileSync('./data/apipubkeys.json', JSON.stringify(apipubkeys));
 }
 process.on('SIGINT', () => {
     saveData();
@@ -1344,7 +2021,7 @@ process.on('SIGINT', () => {
 process.on('SIGTERM', () => {
     saveData();
     process.exit(0);
-})
+});
 
 server.listen(port, () => {
     console.log(`Mensajeador corriendo en puerto ${port}`);

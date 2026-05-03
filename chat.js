@@ -53,11 +53,16 @@ function isValidUUID(uuidString) {
     return uuidRegex.test(uuidString);
 }
 
+function isValidGlobalUUID(uuidString) {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return uuidRegex.test(uuidString);
+}
+
 async function popularListaDeConveres() {
-    for (conver of converes) {
+    for (let conver of converes) {
         let placeholder = document.getElementById('uuid_de_conver');
         let pohtml = placeholder.outerHTML; // pohtml: Placeholder Outer HTML
-        if (!isValidUUID(conver)) {
+        if (!isValidGlobalUUID(conver)) {
             continue;
         }
         let nombreConver = await (await makeRequest('/app/nombreDeConver?conver='+conver,'GET')).text();
@@ -87,6 +92,9 @@ async function enviarMensaje() {
         'sent-at': timestamp
     };
     let encryptedMsg = await encryptDataAES(llaveAesDeConver,JSON.stringify(msgJSON));
+    // let msgAutenticado = (
+    //     await ((await makeRequest('/app/converModoMensajesAutenticados?conver_id=' + converAbierto, 'GET')).text())
+    // ) === 'true';
     let contentToEmit = {
         'datosDeMensaje': encryptedMsg,
         'conver': converAbierto,
