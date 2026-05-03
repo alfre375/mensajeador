@@ -3,7 +3,7 @@
 require('dotenv').config()
 const fs = require('fs');
 const { Client } = require('pg');
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto')
 
 // =====================
 // CONFIG
@@ -48,7 +48,7 @@ async function main() {
     // =====================
     for (let i = 0; i < users.length; i++) {
         const u = users[i];
-        const newId = uuidv4();
+        const newId = crypto.randomUUID();
 
         userIdMap[i.toString()] = newId;
 
