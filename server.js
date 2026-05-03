@@ -748,7 +748,7 @@ app.get('/oauth/github/callback', async (req, res) => {
             let twoWeeksTime = new Date(new Date().getTime() + twoWeeks);
             await client.query(
                 `INSERT INTO sessions_web (id, user_id, expiry) VALUES ($1, $2, $3)`,
-                [sid, user.user_id, twoWeeksTime]
+                [sid, uid, twoWeeksTime]
             );
             res.statusCode = 200;
             res.redirect('/');
