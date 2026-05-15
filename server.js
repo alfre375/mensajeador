@@ -370,7 +370,18 @@ function generateUser(uname, passwd, email, pubkey, lang, display_name) {
     }
 }
 
+const INSTANCE_CODE = process.env.INSTANCE_CODE;
 async function getUserByUsername(uname) {
+    let is_local = true
+    if (uname.includes(':')) {
+        let unames = uname.split(':');
+        uname = unames[0];
+        uinstcode = unames[1];
+        is_local = uinstcode === INSTANCE_CODE;
+    }
+    
+    if (!is_local) return undefined; // Federación aún no implementada
+    
     const res = await client.query(`
         SELECT user_id
         FROM users
@@ -586,7 +597,10 @@ app.post('/login', async (req, res) => {
         }
         return;
     }
-    if (!verifyOTP(mfa_code, decryptAES(user.twofa_key, process.env.SERVER_AES_KEY))) {
+    if (
+        (!verifyOTP(mfa_code, decryptAES(user.twofa_key, process.env.SERVER_AES_KEY))) &&
+        (!(process.env.DEV_SKIP_TOTP === 'SKIP'))
+    ) {
         if (sourcetype === 'web') {
             res.status(401).send(translate('\\!!iniciar_sesión.credenciales_inválidas!!\\', getUserLocales(req)));
         } else {
@@ -1247,7 +1261,7 @@ app.post('/app/comenzarConversacion/md', async (req, res) => {
     }
     
     await client.query(
-        `INSERT INTO conversations (conver_id, conver_name, conver_type, crypt-type, settings)
+        `INSERT INTO conversations (conver_id, conver_name, conver_type, crypt_type, settings)
         VALUES ($1, $2, 0, 'AES-GCM', $3)`,
         [
             uuid,
