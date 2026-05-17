@@ -40,6 +40,8 @@
     "comenzar_md.crear": "Crear conversación",
     "chat.título": "Conversa | Mensajeador",
     "chat.nueva_conversación": "Nueva Conversación",
+    "chat.responder_a_mensaje": "Responder",
+    "chat.cerrar_menu_de_contexto_de_mensaje": "Cerrar",
     "configurar_cuenta.título": "Configurar Cuenta | Mensajeador",
     "configurar_cuenta.notificaciones": "Notificaciones",
     "configurar_cuenta.habilitar_notificaciones": "Habilitar Notificaciones",

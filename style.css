@@ -79,21 +79,29 @@ main.areaConverPrincipal div.mensajes {
     overflow-x: clip;
     padding: 8px;
     /*padding-bottom: -36.8px;*/
-    height: calc(100vh - 31.6px);
+    height: calc(100vh - var(--main-text-box-height));/*31.6px);*/
 }
 
 main.areaConverPrincipal div.mensajes div.mensaje {
-    display: flex;          /* Coloca imagen y texto en una fila */
+    display: block;          /* Coloca imagen y texto en una fila */
     align-items: center;    /* Centra verticalmente la caja de texto con la imagen */
     gap: 8px;               /* Espacio entre imagen y texto */
     padding: 2px 0;
+    border-radius: 10px;
 }
 
-main.areaConverPrincipal div.mensajes div.mensaje img.fotoDePerfilMensaje {
+main.areaConverPrincipal div.mensajes div.mensaje div.mensajePrincipal {
+    display: flex;
+}
+
+main.areaConverPrincipal div.mensajes div.mensaje div.mensajePrincipal img.fotoDePerfilMensaje {
     width: 36.8px;
     height: 36.8px;
-    border-radius: 50%;     /* (opcional) redondear imagen */
     flex-shrink: 0;         /* evita que la imagen se reduzca */
+}
+
+img.fotoDePerfilMensaje {
+    border-radius: 50%;
 }
 
 /*main.areaConverPrincipal div.mensajes div.mensaje div.mensajeMedio {
@@ -139,6 +147,48 @@ main.areaConverPrincipal div.enviarMensajes .btnEnviarMsg {
 
 input[type="text"] {
     outline: none;
+}
+
+#msgAResp {
+    color: white;
+}
+
+#msgARespImg {
+    background-color: white;
+}
+
+#msgARespTxt {
+    width: max-content;
+}
+
+#cerrarMsgAResp{
+    right: 17px;
+    position: absolute;
+}
+
+.respondiendoDiv {
+    display: block;
+}
+
+.noRespondiendo {
+    display: none !important;
+}
+
+/* Context Menu */
+.context_menu {
+    background-color: #443f3f;
+    padding: 2px;
+    border-radius: 10px;
+}
+
+.context_menu button {
+    display: block;
+    width: 100%;
+    border-radius: 10px;
+}
+
+div.mensaje.menu_ctx_abierto {
+    background-color: #888;
 }
 
 /* SSO */

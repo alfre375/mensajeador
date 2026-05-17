@@ -8,16 +8,27 @@ let converes = [];
 let converAbierto = null;
 let llaveAesDeConver = null;
 let userPrivateKey = null;
-const mensajeDeMuestra = `<div class="mensaje" id="muestra_de_mensaje"> <!--Mensaje de muestra-->
-        <img src="/app/fotoDePerfil?user=uid" width="36.8px" height="36.8px" class="fotoDePerfilMensaje">
-        <div class="mensajeMedio">
-            <div> <!--Información de mensaje-->
-                <span>de_quien_es</span>
-                <span>cuando_se_ha_mandado</span>
-                editado_en
-            </div>
-            <div>
-                <span>texto_de_mensaje</span>
+
+let ctx_menu_msg_id = undefined;
+let ctx_menu_msg_div = undefined;
+
+const mensajeDeMuestra = `<div class="mensaje" id="muestra_de_mensaje" data-message-id="id_mensaje"> <!--Mensaje de muestra-->
+        <div class="respondiendoDiv noRespondiendo" id="respondiendo_div_msg_id_mensaje" onclick="scrollToMsg(id_msg_resp)">
+            ╭&nbsp;<img height="17.6px" height="17.6px" id="respondiendo_img_msg_id_mensaje" class="respItm" src="fdp_respondiendo">&nsbp;
+            <span class="respItm" id="respondiendo_usuario_msg_id_mensaje">usuario_respondiendo</span>
+            <span class="respItm" id="respondiendo_txt_msg_id_mensaje">texto_respondiendo</span>
+        </div>
+        <div class="mensajePrincipal">
+            <img src="/app/fotoDePerfil?user=uid" width="36.8px" height="36.8px" class="fotoDePerfilMensaje" id="fdp_msg_id_mensaje">
+            <div class="mensajeMedio">
+                <div> <!--Información de mensaje-->
+                    <span id="enviador_msg_id_mensaje">de_quien_es</span>
+                    <span>cuando_se_ha_mandado</span>
+                    editado_en
+                </div>
+                <div>
+                    <span id="texto_msg_id_mensaje">texto_de_mensaje</span>
+                </div>
             </div>
         </div>
     </div>`
@@ -29,13 +40,20 @@ async function abrirConver(converParaAbrir) {
         llaveAesDeConver = await unwrapAesKeyWithPrivateKey(userPrivateKey, llaveAesDeConver);
         let mensajesParaPoblar = await cargarMensajes();
         resetearAreaDeMensajes();
-        await poblarMensajesViejos(mensajesParaPoblar);
+        let mensajesParaPoblarActualizado = [];
+        for (msg of mensajesParaPoblar) {
+            if (idsDeMensajes.includes(msg.id)) continue;
+            idsDeMensajes.push(msg.id);
+            mensajesParaPoblarActualizado.push(msg);
+        }
+        await poblarMensajesViejos(mensajesParaPoblarActualizado);
         let objetoConver = document.getElementById(converAbierto);
         if (objetoConver.classList.contains('converConNuevoMensaje')) {
             objetoConver.classList.remove('converConNuevoMensaje');
         }
-        let divMensajes = document.getElementById('mensajes');
-        divMensajes.scrollTop = divMensajes.scrollHeight;
+        espacioDeMensajes.scrollTop = espacioDeMensajes.scrollHeight;
+        await delay(2000);
+        pausarCargarMensajes = false;
     }
 }
 async function start() {
@@ -89,7 +107,8 @@ async function enviarMensaje() {
         'sent-by': uid,
         'type': 0,
         'content': contenidoMsg,
-        'sent-at': timestamp
+        'sent-at': timestamp,
+        'replying-to': currentlyReplyingTo
     };
     let encryptedMsg = await encryptDataAES(llaveAesDeConver,JSON.stringify(msgJSON));
     // let msgAutenticado = (
@@ -101,12 +120,14 @@ async function enviarMensaje() {
         'notificar': notificar
     };
     socket.emit('enviarMsg', contentToEmit);
+    
     msg.value = '';
+    closeReplyMessage();
 }
 
 async function cargarMensajes(desde, hasta) {
     if (desde === undefined) {
-        desde = 25;
+        desde = 24;
     }
     if (hasta === undefined) {
         hasta = 0;
@@ -138,27 +159,157 @@ async function poblarMensajesViejos(mensajesParaPoblar) {
         contenidoParaIngresar = contenidoParaIngresar.replaceAll('cuando_se_ha_mandado', enviadoALas);
         contenidoParaIngresar = contenidoParaIngresar.replaceAll('editado_en', ''); // Aún no se pueden editar mensajes
         contenidoParaIngresar = contenidoParaIngresar.replaceAll('texto_de_mensaje', sanetizar(mensajeDecriptado['content']));
+        contenidoParaIngresar = contenidoParaIngresar.replaceAll('id_mensaje', mensaje.id);
+        contenidoParaIngresar = contenidoParaIngresar.replaceAll('muestra_de_mensaje', 'msg_'+mensaje.id);
+        
+        if (mensajeDecriptado['replying-to']) {
+            let res_msg = await makeRequest(`/app/mensaje?conver=${converAbierto}&id=${mensajeDecriptado['replying-to']}`);
+            
+            if (res_msg.status !== 200) {
+                console.error(res_msg.status + await res_msg.text());
+            } else {
+                let res_msg_json =  await res_msg.json();
+                let res_dec = JSON.parse(await decryptDataAES(llaveAesDeConver, res_msg_json));
+                let res_displayname = await (await makeRequest(`/app/nombreParaMostrarPorUID?uid=${res_dec['sent-by']}`)).text();
+                contenidoParaIngresar = contenidoParaIngresar.replaceAll(' noRespondiendo', '');
+                contenidoParaIngresar = contenidoParaIngresar.replaceAll('fdp_respondiendo','/app/fotoDePerfil?user=' + res_dec['sent-by']);
+                contenidoParaIngresar = contenidoParaIngresar.replaceAll('usuario_respondiendo', sanetizar(res_displayname));
+                contenidoParaIngresar = contenidoParaIngresar.replaceAll('texto_respondiendo', sanetizar(res_dec['content']));
+                contenidoParaIngresar = contenidoParaIngresar.replaceAll('id_msg_resp', res_msg_json['id']);
+            }
+        }
+        
         let epma = document.getElementById('espacioParaMensajeAntes');
         let epmaHTML = epma.outerHTML;
         epma.outerHTML = epmaHTML + contenidoParaIngresar;
+        
+        let div_msg = document.getElementById('msg_'+mensaje.id);
+        div_msg.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            let ctx_menu = document.getElementById('msg_context_menu');
+            ctx_menu.style.display = 'block';
+            ctx_menu.style.left = (e.pageX - document.documentElement.clientWidth * 0.2) + 'px';
+            ctx_menu.style.top = (e.pageY - 0) + 'px';
+            ctx_menu.dataset.msgId = mensaje.id;
+            if (ctx_menu_msg_div) {
+                ctx_menu_msg_div.classList.remove('menu_ctx_abierto');
+            }
+            ctx_menu_msg_div = div_msg;
+            ctx_menu_msg_id = div_msg.getAttribute('data-message-id');
+            div_msg.classList.add('menu_ctx_abierto');
+        }, false);
     }
 }
 
+function closeCtxMenu(menuElement, type) {
+    menuElement.style.display = 'none';
+    menuElement.style.left = undefined;
+    menuElement.style.top = undefined;
+    
+    if (type == 'msg') {
+        ctx_menu_msg_div.classList.remove('menu_ctx_abierto');
+    }
+}
+
+document.body.addEventListener('contextmenu', (e) => {
+    closeCtxMenu(document.getElementById('msg_context_menu'), 'msg');
+});
+
+var currentlyReplyingTo = undefined;
+
+function setReplyMessage() {
+    closeCtxMenu(document.getElementById('msg_context_menu'), 'msg'); // Cerrar el menú de contexto
+    
+    msgARespDiv = document.getElementById('msgAResp');
+    msgARespDiv.style.display = 'block';
+    
+    msgARespText = document.getElementById('msgARespTxt');
+    msgARespText.innerHTML = document.getElementById('texto_msg_' + ctx_menu_msg_id).innerHTML;
+    
+    msgARespImg = document.getElementById('msgARespImg');
+    msgARespImg.src = document.getElementById('fdp_msg_' + ctx_menu_msg_id).src;
+    
+    document.documentElement.style.setProperty(
+        '--main-text-box-height',
+        document.getElementById('enviarMensajes').offsetHeight + 'px'
+    );
+    
+    currentlyReplyingTo = ctx_menu_msg_id;
+}
+
+function closeReplyMessage() {
+    msgARespDiv = document.getElementById('msgAResp');
+    msgARespDiv.style.display = 'none';
+    
+    document.documentElement.style.setProperty(
+        '--main-text-box-height',
+        document.getElementById('enviarMensajes').offsetHeight + 'px'
+    );
+    
+    currentlyReplyingTo = undefined;
+}
+
+const espacioDeMensajes = document.getElementById('mensajes');
+var idsDeMensajes = [];
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+var pausarCargarMensajes = true;
+espacioDeMensajes.addEventListener('scroll', async (e) => {
+    if (pausarCargarMensajes) return;
+    if (espacioDeMensajes.scrollTop <= 3) {
+        // Cargar mensajes adicionales
+        pausarCargarMensajes = true;
+        let oldMBHeight = espacioDeMensajes.scrollHeight;
+        let oldScrollHeight = espacioDeMensajes.scrollTop;
+        let mensajesParaPoblar = await cargarMensajes(idsDeMensajes.length + 24, idsDeMensajes.length);
+        let mensajesParaPoblarActualizado = [];
+        for (msg of mensajesParaPoblar) {
+            if (idsDeMensajes.includes(msg.id)) continue;
+            idsDeMensajes.push(msg.id);
+            mensajesParaPoblarActualizado.push(msg);
+        }
+        poblarMensajesViejos(mensajesParaPoblarActualizado);
+        let scrollHeightDiff = espacioDeMensajes.scrollHeight - oldMBHeight;
+        espacioDeMensajes.scrollTop = oldScrollHeight + scrollHeightDiff;
+        
+        await delay(2000);
+        pausarCargarMensajes = false;
+    }
+});
+
+async function scrollToMsg(msg) {
+    console.log('Scrolling!')
+    if (!idsDeMensajes.includes(msg.toString())) return;
+    
+    let msg_div = document.getElementById('msg_' + msg);
+    msg_div.scrollIntoView({ behavior: 'smooth' });
+    await delay(500);
+    
+    msg_div.style.backgroundColor = '#666';
+    await delay(500);
+    
+    msg_div.style.backgroundColor = '#fff';
+    await delay(500);
+    
+    msg_div.style.backgroundColor = undefined;
+}
+
 function resetearAreaDeMensajes() {
-    let mensajes = document.getElementById('mensajes');
-    mensajes.innerHTML = '<div class="noMostrar" id="espacioParaMensajeAntes"></div><div class="noMostrar" id="espacioParaMensajeDespues"></div>';
+    espacioDeMensajes.innerHTML = '<div class="noMostrar" id="espacioParaMensajeAntes"></div><div class="noMostrar" id="espacioParaMensajeDespues"></div>';
 }
 
 socket.on('recibirMensaje', async (msg) => {
     let converDeMensaje = msg['conver'];
     //console.log(converDeMensaje);
     if (converDeMensaje === converAbierto) {
+        idsDeMensajes.push(msg['id'])
         // Averiguar y desencriptar mensaje
-        let mensaje = msg['datosDeMensaje'];
-        mensaje = JSON.parse(await decryptDataAES(llaveAesDeConver, mensaje));
+        let mensaje_enc = msg['datosDeMensaje'];
+        let mensaje = JSON.parse(await decryptDataAES(llaveAesDeConver, mensaje_enc));
         
         // Averiguar si está el usuario hasta abajo de la lista de mensajes
-        let divMensajes = document.getElementById('mensajes');
+        let divMensajes = espacioDeMensajes;
         let estaHastaAbajo = divMensajes.scrollHeight - divMensajes.scrollTop <= divMensajes.clientHeight + 0.25;
         
         // Agregar mensaje a lista de mensajes
@@ -177,6 +328,24 @@ socket.on('recibirMensaje', async (msg) => {
         contenidoParaIngresar = contenidoParaIngresar.replaceAll('cuando_se_ha_mandado', enviadoALas);
         contenidoParaIngresar = contenidoParaIngresar.replaceAll('editado_en', ''); // Aún no se pueden editar mensajes
         contenidoParaIngresar = contenidoParaIngresar.replaceAll('texto_de_mensaje', sanetizar(mensaje['content']));
+        
+        if (mensaje['replying-to']) {
+            let res_msg = await makeRequest(`/app/mensaje?conver=${converAbierto}&id=${mensaje['replying-to']}`);
+            
+            if (res_msg.status !== 200) {
+                console.error(res_msg.status + await res_msg.text());
+            } else {
+                let res_msg_json =  await res_msg.json();
+                let res_dec = JSON.parse(await decryptDataAES(llaveAesDeConver, res_msg_json));
+                let res_displayname = await (await makeRequest(`/app/nombreParaMostrarPorUID?uid=${res_dec['sent-by']}`)).text();
+                contenidoParaIngresar = contenidoParaIngresar.replaceAll(' noRespondiendo', '');
+                contenidoParaIngresar = contenidoParaIngresar.replaceAll('fdp_respondiendo','/app/fotoDePerfil?user=' + res_dec['sent-by']);
+                contenidoParaIngresar = contenidoParaIngresar.replaceAll('usuario_respondiendo', sanetizar(res_displayname));
+                contenidoParaIngresar = contenidoParaIngresar.replaceAll('texto_respondiendo', sanetizar(res_dec['content']));
+                contenidoParaIngresar = contenidoParaIngresar.replaceAll('id_msg_resp', res_msg_json['id']);
+            }
+        }
+        
         let epmd = document.getElementById('espacioParaMensajeDespues');
         let epmdHTML = epmd.outerHTML;
         epmd.outerHTML = contenidoParaIngresar + epmdHTML;

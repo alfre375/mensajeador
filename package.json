@@ -1,6 +1,6 @@
 {
   "name": "mensajeador",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Un programa de telecomunicaciones de código abierto",
   "main": "server.js",
   "scripts": {

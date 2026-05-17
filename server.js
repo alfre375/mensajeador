@@ -1446,6 +1446,39 @@ app.get('/app/nombreParaMostrarPorUID', async (req, res) => {
     res.send('El usuario especificado no se ha encontrado');
 });
 
+app.get('/app/mensaje', async (req, res) => {
+    let conver = req.query.conver;
+    let conver_instance = INSTANCE_ID;
+    let is_local = true;
+    if (conver.includes(':')) {
+        let csplit = conver.split(':');
+        conver = csplit[0];
+        conver_instance = csplit[1];
+        is_local = conver_instance == INSTANCE_ID;
+    }
+    
+    if (!is_local) {
+        // Federación aún no implementada
+        if (conver_instance !== INSTANCE_ID) {
+            res.statusCode = 501;
+            res.send('Funcionalidad de federación aún no implementada');
+            return;
+        }
+    }
+    
+    if ((await client.query(`SELECT * FROM conversations WHERE conver_id = $1`, [conver])).rowCount === 0) {
+        res.statusCode = 400;
+        res.send('La conversación solicitada no existe');
+        return;
+    }
+    
+    let msg_id = parseInt(req.query.id);
+    
+    let msg_query = await client.query(`SELECT * FROM messages WHERE conver_id = $1 AND id = $2`, [conver, msg_id]);
+    
+    res.status(200).json(msg_query.rows[0]);
+})
+
 app.get('/style.css', (req, res) => {
     res.sendFile(__dirname + '/style.css');
 });
@@ -1918,8 +1951,8 @@ io.on('connection', async (socket) => {
         );
         let conversationParticipants = converParticipantsQuery.rows.map(r => r['user_global_id']);
         if ((converQuery.rowCount !== 0) && (conversationParticipants.includes(liu_global))) {
-            await client.query(
-                `INSERT INTO messages (conver_id, sender_global_id, ciphertext, iv) VALUES ($1, $2, $3, $4)`,
+            let insert_res = await client.query(
+                `INSERT INTO messages (conver_id, sender_global_id, ciphertext, iv) VALUES ($1, $2, $3, $4) RETURNING id`,
                 [
                     conver,
                     liu_global,
@@ -1927,6 +1960,10 @@ io.on('connection', async (socket) => {
                     datosDeMensaje.iv
                 ]
             );
+            
+            let id = insert_res.rows[0].id;
+            let msg_with_id = msg;
+            msg_with_id['id'] = id;
             
             // Emitir a miembros en linea
             let socketsParaEmitir = [];
@@ -1942,7 +1979,7 @@ io.on('connection', async (socket) => {
                 }
             }
             for (let socketId of socketsParaEmitir) {
-                io.to(socketId).emit('recibirMensaje', msg);
+                io.to(socketId).emit('recibirMensaje', msg_with_id);
             }
             
             // Notificar a miembros listados para notificación
