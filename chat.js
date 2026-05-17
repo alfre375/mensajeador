@@ -14,7 +14,7 @@ let ctx_menu_msg_div = undefined;
 
 const mensajeDeMuestra = `<div class="mensaje" id="muestra_de_mensaje" data-message-id="id_mensaje"> <!--Mensaje de muestra-->
         <div class="respondiendoDiv noRespondiendo" id="respondiendo_div_msg_id_mensaje" onclick="scrollToMsg(id_msg_resp)">
-            ╭&nbsp;<img height="17.6px" height="17.6px" id="respondiendo_img_msg_id_mensaje" class="respItm" src="fdp_respondiendo">&nsbp;
+            ╭&nbsp;<img height="17.6px" height="17.6px" id="respondiendo_img_msg_id_mensaje" class="respItm" src="fdp_respondiendo">&nbsp;
             <span class="respItm" id="respondiendo_usuario_msg_id_mensaje">usuario_respondiendo</span>
             <span class="respItm" id="respondiendo_txt_msg_id_mensaje">texto_respondiendo</span>
         </div>
