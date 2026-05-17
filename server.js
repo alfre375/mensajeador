@@ -846,7 +846,7 @@ app.post('/registrar', async (req, res) => {
             uname,
             passwd,
             salt,
-            email,
+            correo,
             clavepublica,
             display_name
         ]
