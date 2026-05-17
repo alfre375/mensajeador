@@ -297,6 +297,7 @@ async function scrollToMsg(msg) {
 
 function resetearAreaDeMensajes() {
     espacioDeMensajes.innerHTML = '<div class="noMostrar" id="espacioParaMensajeAntes"></div><div class="noMostrar" id="espacioParaMensajeDespues"></div>';
+    idsDeMensajes = [];
 }
 
 socket.on('recibirMensaje', async (msg) => {
