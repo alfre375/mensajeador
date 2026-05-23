@@ -282,7 +282,7 @@ async function getLoggedInUser(req, sigreq) {
         if (!session) return undefined;
         
         if (session.expiry < Date.now()) {
-            await client.query(`DELETE FROM sessions_web WHERE id = $1`, [sessionId]);
+            await client.query(`DELETE FROM sessions_web WHERE id = $1`, [req.session.sessionId]);
             return undefined;
         }
         
