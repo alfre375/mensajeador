@@ -35,3 +35,26 @@ socket.on('recibirClavePrivada', async (claveEncriptada) => {
     // Escribir clave privada a localStorage
     localStorage.setItem('account_private_key', claveDecriptada);
 });
+
+async function insertarConTexto() {
+    let full_code = prompt('Inserta el código: ');
+    let code_hash = await sha256(full_code);
+    let [salt, iv, ciphertext] = full_code.split(';');
+    
+    let passwd = prompt('Inserta la contraseña: ');
+    passwd = await sha256(passwd + salt);
+    
+    let pkey_dec = await decryptDataAES(await importAESKeyFromHex(passwd), { iv, ciphertext });
+    
+    let pkey_original = localStorage.getItem('account_private_key');
+    let confirmation;
+    if (pkey_original) {
+        confirmation = confirm('¿Quieres reponer la clave existente con la de hash: ' + code_hash + '?');
+    } else {
+        confirmation = confirm('¿Quieres agregar la clave con hash: ' + code_hash + '?');
+    }
+    
+    if (confirmation) {
+        localStorage.setItem('account_private_key', pkey_dec);
+    }
+}

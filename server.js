@@ -1495,6 +1495,10 @@ app.get('/enviarClavePrivada.js', (req, res) => {
     res.sendFile(__dirname + '/enviarClavePrivada.js');
 });
 
+app.get('/enviarClavePrivada_Module.js', (req, res) => {
+    res.sendFile(__dirname + '/enviarClavePrivada_Module.js');
+});
+
 app.get('/recibirClavePrivada.js', (req, res) => {
     res.sendFile(__dirname + '/recibirClavePrivada.js');
 });
@@ -1514,6 +1518,14 @@ app.get('/assets/fonts/linjalipamanka-normal.woff', (req, res) => {
 app.get('/assets/imgs/GitHub_Invertocat_Black.svg', (req, res) => {
     res.sendFile(__dirname + '/assets/imgs/GitHub_Invertocat_Black.svg');
 });
+
+app.get('/clientLibraries/qr_esm.js', (req, res) => {
+    res.sendFile(__dirname + '/clientLibraries/node-qr/qr_esm.js');
+});
+
+app.get('/npm/dijkstrajs@1.0.3/\\+esm', (req, res) => {
+    res.sendFile(__dirname + '/clientLibraries/node-qr/dijkstrasjs_esm.js');
+})
 
 app.get("/qrgen/:contents", async (req, res) => {
     try {

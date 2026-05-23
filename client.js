@@ -412,3 +412,48 @@ async function comenzarMD() {
         window.location.href = '../';
     }
 }
+
+function saltGen(len,characters) {
+	if (len == null) {
+		len = 16
+	}
+	if (characters == null) {
+		characters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+	}
+	let res = '';
+	let counter = 0;
+	let charactersLength = characters.length;
+    while (counter < len) {
+        res += characters.charAt(Math.floor(Math.random() * charactersLength));
+        counter += 1;
+    }
+    return res;
+}
+
+async function sha256(message) {
+    // encode as UTF-8
+    const msgBuffer = new TextEncoder().encode(message);
+    // hash the message
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    // convert ArrayBuffer to Array
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    // convert bytes to hex string
+    const hashHex = hashArray.map(b => ('00' + b.toString(16)).slice(-2)).join('');
+    return hashHex;
+}
+
+async function importAESKeyFromHex(hexKey) {
+    // hex string -> Uint8Array
+    const keyBytes = new Uint8Array(
+        hexKey.match(/.{1,2}/g).map(byte => parseInt(byte, 16))
+    );
+
+    // import as CryptoKey
+    return await crypto.subtle.importKey(
+        "raw",
+        keyBytes,
+        { name: "AES-GCM" },
+        false,
+        ["encrypt", "decrypt"]
+    );
+}

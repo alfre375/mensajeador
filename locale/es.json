@@ -59,7 +59,9 @@
     "app.no_se_encontró_uuid_abierto": "No se pudo encontrar un UUID disponible",
     "recibir_clave_privada.título": "Recibir y Guardar Clave Privada | Mensajeador",
     "recibir_clave_privada.comenzar": "Recibir y guardar clave privada de otro dispositivo (primero debes iniciar el proceso de enviar)",
+    "recibir_clave_privada.insertar_basado_en_texto": "Sobreescribir clave privada con una nueva basado en texto",
     "enviar_clave_privada.título": "Enviar Clave Privada | Mensajeador",
     "enviar_clave_privada.comenzar": "Enviar de forma segura su clave privada a otro dispositivo",
+    "enviar_clave_privada.abrir_código_qr": "Mostrar un código QR de la clave privada (no hacer esto a vista pública)",
     "establecer_fdp.sin_archivo": "No se ha especificado el archivo de la foto de perfil"
 }

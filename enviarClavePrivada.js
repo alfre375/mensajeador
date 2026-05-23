@@ -9,6 +9,22 @@ function intencionDeEnviar(id) {
     socket.emit('intencionEnviarClavePrivada', {'id': id || '000000'});
 }
 
+async function qrEnviarClavePrivada() {
+    let qr_img = document.getElementById('pkeyqr');
+    let passwd = prompt('Ingresa una contraseña: ');
+    let pkey = localStorage.getItem('account_private_key');
+    
+    // Encriptar la clave privada con el hash de la contraseña
+    let salt = saltGen(16);
+    passwd = await sha256(passwd + salt);
+    
+    let pkey_enc = await encryptDataAES(await importAESKeyFromHex(passwd), pkey);
+    pkey = salt + ';' + pkey_enc['iv'] + ';' + pkey_enc['ciphertext'];
+    
+    // Generar código QR
+    await generateQR(qr_img, pkey, 'M');
+}
+
 socket.on('idIECPExistente', (id) => {
     intencionDeEnviar(id + 1);
 });
