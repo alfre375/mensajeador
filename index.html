@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" class="splash">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,8 +7,23 @@
         <title>\!!índice.título!!\</title>
     </head>
     <body>
-        <nav></nav>
-        <a href="/registrar">\!!índice.crear_cuenta!!\</a><br>
-        <a href="/login">\!!índice.iniciar_sesión!!\</a>
+        <nav>
+            <div>
+                <p class="service-name">\!!general.nómbre_de_servicio!!\</p>
+            </div>
+            <div class="right-align">
+                <a href="https://github.com/alfre375/mensajeador" class="source-link">\!!índice.enlace_al_código_fuente!!\</a>
+                <a href="/tyc" style="display: none;">\!!índice.términos_y_condiciones!!\</a>
+                <a href="/registrar">\!!índice.crear_cuenta!!\</a>
+                <a href="/login" class="primary">\!!índice.iniciar_sesión!!\</a>
+            </div>
+        </nav>
+        <div class="undernav"></div>
+        <main>
+            <div class="intro">
+                <h1 class="service-name">\!!general.nómbre_de_servicio!!\</h1>
+                <p>\!!índice.frase_principal!!\</p>
+            </div>
+        </main>
     </body>
 </html>

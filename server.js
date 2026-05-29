@@ -150,6 +150,9 @@ function getUserLocales(req) {
     // Browser (priority 1)
     let browser_locale = req.headers['accept-language'];
     let appropriate_browser_locale_found = false;
+    
+    if (!browser_locale) return ['es'];
+    
     browser_locale.replaceAll(' ','');
     browser_locale = browser_locale.split(',');
     let locale_list = []

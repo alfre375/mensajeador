@@ -1,7 +1,9 @@
 {
     "índice.título": "聊天服务",
+    "índice.enlace_al_código_fuente": "代码",
     "índice.crear_cuenta": "创建账户",
     "índice.iniciar_sesión": "登录",
+    "índice.frase_principal": "免费、自由和开源的聊天服务",
     "iniciar_sesión.título": "登录 | 聊天服务",
     "iniciar_sesión.nombre_de_usuario": "用户名：",
     "iniciar_sesión.contraseña": "密码：",
@@ -50,6 +52,7 @@
     "configurar_cuenta.usar_sso.advertencia": "",
     "configurar_cuenta.usar_sso.github": "",
     "general.debes_configurar_a2f": "",
+    "general.nómbre_de_servicio": "聊天服务",
     "app.usuario_no_existe": "",
     "app.uid_no_válido": "",
     "app.doble_comillas_inválido_en_nombre_de_conver": "",

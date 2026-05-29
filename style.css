@@ -297,3 +297,71 @@ div.mensaje.menu_ctx_abierto {
   background-color: #303030;
   opacity: 8%;
 }
+
+/* SPLASH SCREEN */
+nav {
+    background-color: antiquewhite;
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: fixed;
+    top: 0px;
+    width: 100%;
+}
+
+.undernav {
+    height: 38.4px;
+    padding: 0;
+    margin: 0;
+}
+
+nav a {
+    background-color: #ffffff75;
+    border-color: #00000000;
+    border-radius: 15px;
+    padding: 5px;
+    height: 29.2px;
+    cursor: pointer;
+    color: #000;
+    text-decoration: none;
+    border-width: 1.600px;
+    margin: 2px;
+    font-size: small;
+}
+
+nav a img {
+    height: 100%;
+}
+
+nav a.primary {
+    background-color: #00ffe175;
+}
+
+nav a:hover {
+    background-color: #00ffaa54;
+}
+
+nav div p {
+    margin: 0;
+}
+
+.splash body {
+    margin: 0;
+}
+
+.splash body main div.intro {
+    background-color: #00ffe1;
+    height: 400px;
+    align-content: center;
+    text-align: center;
+    font-size: xx-large;
+}
+
+.splash body main div.intro h1 {
+    font-family: cursive;
+}
+
+.service-name {
+    font-family: cursive;
+}
